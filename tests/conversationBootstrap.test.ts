@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import type { ConversationRunner, LlmPort } from "@elysian/simulation-agent";
 import {
+  buildConversationRuntime,
   createConversationHub,
   loadLlmConfig,
   saveLlmConfig,
@@ -205,6 +206,32 @@ test("admin test endpoint probes the current or a candidate config", async () =>
   });
   assert.equal(candidateBad?.status, 200);
   assert.deepEqual(candidateBad?.body, { ok: false, error: "401 invalid api key" });
+});
+
+test("buildConversationRuntime constructs a custom relay runtime offline", () => {
+  const runtime = buildConversationRuntime({
+    baseUrl: "https://relay.example.com/v1",
+    model: "any-model-name",
+    api: "openai-completions",
+    apiKey: "sk-relay",
+  });
+  assert.ok(runtime.runner);
+  assert.equal(runtime.probeLlm.model, "any-model-name");
+  assert.equal(runtime.probeLlm.name, "pi-ai:custom-relay");
+
+  const anthropicStyle = buildConversationRuntime({
+    baseUrl: "https://relay.example.com",
+    model: "claude-style-model",
+    api: "anthropic-messages",
+  });
+  assert.equal(anthropicStyle.probeLlm.model, "claude-style-model");
+});
+
+test("buildConversationRuntime rejects catalog models that do not exist", () => {
+  assert.throws(
+    () => buildConversationRuntime({ provider: "anthropic", model: "definitely-not-real" }),
+    /not in the pi-ai catalog/,
+  );
 });
 
 test("admin catalog lists real providers and models offline", async () => {

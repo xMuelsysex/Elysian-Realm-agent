@@ -70,7 +70,7 @@ Endpoints:
 Three ways, in priority order:
 
 1. **Environment variables** — `ELYSIAN_LLM_PROVIDER` + `ELYSIAN_LLM_MODEL` (auth via the provider's standard variable). When set, the selection is pinned and the admin UI rejects changes.
-2. **Admin web UI** — open `http://127.0.0.1:4318/admin`, pick a provider/model from the pi-ai catalog, optionally paste an API key, test the connection, save. The configuration hot-loads (no restart) and persists to `~/.elysian-realm/credentials.json` (mode 0600, override with `ELYSIAN_CREDENTIALS_PATH`). Stored keys are never echoed back by the API.
+2. **Admin web UI** — open `http://127.0.0.1:4318/admin`. Two access modes: **custom relay** (default; paste any OpenAI- or Anthropic-compatible base URL — relays/proxies/one-api — plus a free-form model name and key) or the **pi-ai catalog** (pick from built-in providers/models). Test the connection, save, and the configuration hot-loads (no restart), persisting to `~/.elysian-realm/credentials.json` (mode 0600, override with `ELYSIAN_CREDENTIALS_PATH`). Stored keys are never echoed back by the API.
 3. **Embedding** — assemble a runner in code (see below) for full control.
 
 Admin security boundary: the admin interface is enabled as-is only for loopback binds. Binding to a non-loopback host requires `ELYSIAN_ADMIN_TOKEN` (sent as `Authorization: Bearer <token>`); without it the admin interface stays off and the service says so at startup.

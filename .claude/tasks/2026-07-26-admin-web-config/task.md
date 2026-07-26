@@ -1,5 +1,7 @@
 # 网页 admin 入口：LLM key 配置与热装配
 
+> 追加（同日）：见 2026-07-26-relay-mode/task.md —— 配置扩展为双模式，页面默认改为自定义中转（baseUrl + key）。
+
 ## 目标与决策
 
 - 诉求：网页交互配置 provider/model/key，免改 `.env`；重启保留（主人确认落盘 0600）。

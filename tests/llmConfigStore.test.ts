@@ -64,6 +64,64 @@ test("default path honors ELYSIAN_CREDENTIALS_PATH override", () => {
   assert.match(defaultLlmConfigPath({}), /\.elysian-realm[/\\]credentials\.json$/);
 });
 
+test("custom relay config round-trips with baseUrl, api, and key", () => {
+  const path = tempConfigPath();
+  saveLlmConfig(path, {
+    baseUrl: "https://relay.example.com/v1",
+    model: "gpt-4o-mini",
+    api: "openai-completions",
+    apiKey: "sk-relay",
+  });
+  assert.deepEqual(loadLlmConfig(path), {
+    baseUrl: "https://relay.example.com/v1",
+    model: "gpt-4o-mini",
+    api: "openai-completions",
+    apiKey: "sk-relay",
+  });
+});
+
+test("exactly one of provider and baseUrl must be set", () => {
+  const path = tempConfigPath();
+  assert.throws(
+    () => saveLlmConfig(path, { model: "m" } as never),
+    /exactly one of provider .* or baseUrl/,
+  );
+  assert.throws(
+    () =>
+      saveLlmConfig(path, {
+        provider: "anthropic",
+        baseUrl: "https://relay.example.com",
+        model: "m",
+      }),
+    /exactly one of provider .* or baseUrl/,
+  );
+});
+
+test("custom relay validation rejects bad urls and unknown api formats", () => {
+  const path = tempConfigPath();
+  assert.throws(
+    () => saveLlmConfig(path, { baseUrl: "not-a-url", model: "m" }),
+    /baseUrl must be a valid http\(s\) URL/,
+  );
+  assert.throws(
+    () => saveLlmConfig(path, { baseUrl: "ftp://x.example", model: "m" }),
+    /baseUrl must be a valid http\(s\) URL/,
+  );
+  assert.throws(
+    () =>
+      saveLlmConfig(path, {
+        baseUrl: "https://relay.example.com",
+        model: "m",
+        api: "grpc" as never,
+      }),
+    /api must be one of/,
+  );
+  assert.throws(
+    () => saveLlmConfig(path, { provider: "anthropic", model: "m", api: "openai-completions" }),
+    /api is only valid in custom relay mode/,
+  );
+});
+
 test("stored file content is human-readable json", () => {
   const path = tempConfigPath();
   saveLlmConfig(path, { provider: "groq", model: "some-model" });

@@ -12,6 +12,9 @@
 // the 0600 credentials file and are applied to the running service instantly.
 
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { createModels, createProvider, type MutableModels } from "@earendil-works/pi-ai";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   createConversationRunner,
@@ -26,14 +29,18 @@ import {
   defaultLlmConfigPath,
   loadLlmConfig,
   saveLlmConfig,
+  validateLlmConfig,
   type StoredLlmConfig,
 } from "./llmConfigStore.js";
 
 export {
+  CUSTOM_LLM_APIS,
   LlmConfigError,
   defaultLlmConfigPath,
   loadLlmConfig,
   saveLlmConfig,
+  validateLlmConfig,
+  type CustomLlmApi,
   type StoredLlmConfig,
 } from "./llmConfigStore.js";
 export { ADMIN_PAGE_HTML } from "./adminPage.js";
@@ -49,6 +56,8 @@ export interface ConversationHubStatus {
   configured: boolean;
   provider?: string;
   model?: string;
+  /** Custom relay mode: the configured endpoint base URL. */
+  baseUrl?: string;
   /** Where the active configuration came from. */
   configSource: "env" | "file" | "admin" | "none";
   /** Where provider auth comes from: provider env vars or the stored key. */
@@ -101,7 +110,7 @@ export function createConversationHub(
   options: ConversationHubOptions = {},
 ): ConversationHub {
   const credentialsPath = options.credentialsPath ?? defaultLlmConfigPath(env);
-  const buildRuntime = options.buildRuntime ?? defaultBuildRuntime;
+  const buildRuntime = options.buildRuntime ?? buildConversationRuntime;
 
   let runtime: ConversationRuntime | undefined;
   let activeConfig: StoredLlmConfig | undefined;
@@ -135,7 +144,11 @@ export function createConversationHub(
 
     getStatus: () => ({
       configured: runtime !== undefined,
-      ...(activeConfig ? { provider: activeConfig.provider, model: activeConfig.model } : {}),
+      ...(activeConfig?.provider !== undefined ? { provider: activeConfig.provider } : {}),
+      ...(activeConfig?.baseUrl !== undefined
+        ? { provider: "custom", baseUrl: activeConfig.baseUrl }
+        : {}),
+      ...(activeConfig ? { model: activeConfig.model } : {}),
       configSource,
       keySource:
         configSource === "env"
@@ -282,14 +295,11 @@ function createAdminHandler(
   };
 }
 
-function defaultBuildRuntime(config: StoredLlmConfig): ConversationRuntime {
-  const models = builtinModels();
-  const model = models.getModel(config.provider, config.model);
-  if (!model) {
-    throw new LlmConfigError(
-      `model "${config.model}" of provider "${config.provider}" is not in the pi-ai catalog`,
-    );
-  }
+/** Production runtime builder: catalog mode or custom relay mode. */
+export function buildConversationRuntime(config: StoredLlmConfig): ConversationRuntime {
+  const { models, model } = config.baseUrl !== undefined
+    ? customRelayModels(config)
+    : catalogModels(config);
 
   const probeLlm = createPiAiLlmPort(models, model, {
     ...(config.apiKey !== undefined ? { apiKey: config.apiKey } : {}),
@@ -307,33 +317,67 @@ function defaultBuildRuntime(config: StoredLlmConfig): ConversationRuntime {
   };
 }
 
+interface RuntimeModels {
+  models: MutableModels;
+  model: Model<Api>;
+}
+
+function catalogModels(config: StoredLlmConfig): RuntimeModels {
+  const models = builtinModels();
+  const model = models.getModel(config.provider as string, config.model);
+  if (!model) {
+    throw new LlmConfigError(
+      `model "${config.model}" of provider "${config.provider}" is not in the pi-ai catalog`,
+    );
+  }
+  return { models, model };
+}
+
+const CUSTOM_PROVIDER_ID = "custom-relay";
+
+/**
+ * Custom relay mode: wrap any OpenAI- or Anthropic-compatible endpoint into a
+ * pi-ai provider. Auth resolves to nothing here on purpose — the stored key is
+ * passed explicitly per request and explicit keys win over provider auth.
+ */
+function customRelayModels(config: StoredLlmConfig): RuntimeModels {
+  const api = config.api ?? "openai-completions";
+  const baseUrl = config.baseUrl as string;
+  const model = {
+    id: config.model,
+    name: config.model,
+    api,
+    provider: CUSTOM_PROVIDER_ID,
+    baseUrl,
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128_000,
+    maxTokens: 8_192,
+  } as unknown as Model<Api>;
+
+  const provider = createProvider({
+    id: CUSTOM_PROVIDER_ID,
+    name: "Custom Relay",
+    baseUrl,
+    auth: { apiKey: { name: "Custom Relay", resolve: async () => ({ auth: {} }) } },
+    models: [model],
+    api: api === "anthropic-messages" ? anthropicMessagesApi() : openAICompletionsApi(),
+  });
+
+  const models = createModels();
+  models.setProvider(provider);
+  return { models, model };
+}
+
 function parseAdminConfigBody(
   body: unknown,
 ): { ok: true; config: StoredLlmConfig } | { ok: false; message: string } {
-  if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    return { ok: false, message: "request body must be a JSON object" };
+  try {
+    return { ok: true, config: validateLlmConfig(body) };
+  } catch (error) {
+    return { ok: false, message: errorText(error) };
   }
-  const record = body as Record<string, unknown>;
-  if (typeof record.provider !== "string" || record.provider.trim().length === 0) {
-    return { ok: false, message: "provider must be a non-empty string" };
-  }
-  if (typeof record.model !== "string" || record.model.trim().length === 0) {
-    return { ok: false, message: "model must be a non-empty string" };
-  }
-  if (
-    record.apiKey !== undefined &&
-    (typeof record.apiKey !== "string" || record.apiKey.trim().length === 0)
-  ) {
-    return { ok: false, message: "apiKey must be a non-empty string when present" };
-  }
-  return {
-    ok: true,
-    config: {
-      provider: record.provider,
-      model: record.model,
-      ...(record.apiKey !== undefined ? { apiKey: record.apiKey as string } : {}),
-    },
-  };
 }
 
 function adminBadRequest(message: string): AdminRequestResult {

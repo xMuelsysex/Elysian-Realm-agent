@@ -1,5 +1,11 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-07-26 admin 中转接入（baseURL + key）
+
+- 改动：配置双模式（`provider` 目录 / `baseUrl` 中转，二选一），校验统一收敛 `validateLlmConfig`；中转 runtime 走 `createProvider` + 合成 Model + lazy api（openai-completions / anthropic-messages）；页面默认「自定义中转」模式。关键文件：`llmConfigStore.ts`、`conversationBootstrap.ts`（customRelayModels）、`adminPage.ts`。
+- 学到：pi-ai 自定义 provider 的 auth 可显式置空（`resolve: async () => ({ auth: {} })`），key 走 `StreamOptions.apiKey`/`Agent.getApiKey` 每请求显式传——explicit key wins；lazy api 从 `@earendil-works/pi-ai/api/*.lazy` 子路径导入。
+- 验证手法沉淀：本地 20 行假中转（SSE chunk 格式）即可端到端验证整条 LLM 管线，无需真实 key。
+
 ## 2026-07-26 网页 admin 入口：LLM key 配置与热装配
 
 - 改动：`GET /admin` 内嵌单页（provider/model 下拉 + key + 测试连接）、`/v1/admin/llm-config`(+/test、catalog) API、key 落盘 `~/.elysian-realm/credentials.json`（0600 原子写，`ELYSIAN_CREDENTIALS_PATH` 可覆盖）、`createConversationHub` 热装配（env > file > admin，env 时 pin 住 admin 改动 409）、`AgentServiceOptions.conversationRunner` 放宽为函数联合类型（readyz 动态反映）。关键文件：`conversationBootstrap.ts`（hub）、`llmConfigStore.ts`、`adminPage.ts`、`agentService.ts`。
