@@ -170,6 +170,7 @@ export function createConversationHub(
       swapRuntime,
       envPinned: envConfig !== undefined,
       getRuntime: () => runtime,
+      getActiveConfig: () => activeConfig,
     }),
   };
 
@@ -194,6 +195,7 @@ function createAdminHandler(
     swapRuntime: (next: ConversationRuntime, config: StoredLlmConfig, source: "file" | "admin") => void;
     envPinned: boolean;
     getRuntime: () => ConversationRuntime | undefined;
+    getActiveConfig: () => StoredLlmConfig | undefined;
   },
 ): AdminRequestHandler {
   return async (method, path, body): Promise<AdminRequestResult | undefined> => {
@@ -241,18 +243,21 @@ function createAdminHandler(
 
     if (path === "/v1/admin/llm-config/test" && method === "POST") {
       let probe: LlmPort;
+      let probedConfig: StoredLlmConfig | undefined;
       try {
         if (body !== undefined && body !== null && Object.keys(body as object).length > 0) {
           const parsed = parseAdminConfigBody(body);
           if (!parsed.ok) {
             return adminBadRequest(parsed.message);
           }
+          probedConfig = parsed.config;
           probe = context.buildRuntime(parsed.config).probeLlm;
         } else {
           const runtime = context.getRuntime();
           if (!runtime) {
             return adminBadRequest("no llm configuration to test; provide one in the request body");
           }
+          probedConfig = context.getActiveConfig();
           probe = runtime.probeLlm;
         }
       } catch (error) {
@@ -272,7 +277,16 @@ function createAdminHandler(
           body: { ok: true, model: probe.model, content: completion.content.slice(0, 200) },
         };
       } catch (error) {
-        return { status: 200, body: { ok: false, error: errorText(error) } };
+        return {
+          status: 200,
+          body: {
+            ok: false,
+            error: errorText(error),
+            // Surface the concrete request target so relay path mistakes
+            // (e.g. a missing /v1 in baseUrl) are diagnosable at a glance.
+            ...(probedConfig ? { target: describeRequestTarget(probedConfig) } : {}),
+          },
+        };
       }
     }
 
@@ -378,6 +392,17 @@ function parseAdminConfigBody(
   } catch (error) {
     return { ok: false, message: errorText(error) };
   }
+}
+
+/** Human-readable request target for diagnostics (never includes the key). */
+function describeRequestTarget(config: StoredLlmConfig): string {
+  if (config.baseUrl === undefined) {
+    return `catalog provider "${config.provider}"`;
+  }
+  const base = config.baseUrl.replace(/\/+$/, "");
+  return (config.api ?? "openai-completions") === "anthropic-messages"
+    ? `POST ${base}/v1/messages`
+    : `POST ${base}/chat/completions`;
 }
 
 function adminBadRequest(message: string): AdminRequestResult {

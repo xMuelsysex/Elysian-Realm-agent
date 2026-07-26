@@ -42,7 +42,7 @@ export const ADMIN_PAGE_HTML = `<!doctype html>
   </div>
 
   <div id="customFields">
-    <label for="baseUrl">Base URL</label>
+    <label for="baseUrl">Base URL <span class="muted">（OpenAI 兼容通常以 /v1 结尾，实际请求打到 {Base URL}/chat/completions）</span></label>
     <input id="baseUrl" type="url" placeholder="https://api.example.com/v1" autocomplete="off">
     <label for="customModel">Model <span class="muted">（中转站的模型名，自由填写）</span></label>
     <input id="customModel" type="text" placeholder="gpt-4o-mini / claude-sonnet-4-6 / …" autocomplete="off">
@@ -181,7 +181,8 @@ $("test").addEventListener("click", async () => {
   if (status === 200 && body.ok) {
     showResult(true, \`连接成功 (\${body.model})：\${body.content}\`);
   } else {
-    showResult(false, body.error?.message ?? body.error ?? \`测试失败 (HTTP \${status})\`);
+    const detail = body.error?.message ?? body.error ?? \`测试失败 (HTTP \${status})\`;
+    showResult(false, body.target ? \`\${detail}\\n实际请求: \${body.target}\` : detail);
   }
 });
 

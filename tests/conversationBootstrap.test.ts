@@ -205,7 +205,23 @@ test("admin test endpoint probes the current or a candidate config", async () =>
     apiKey: "bad-key",
   });
   assert.equal(candidateBad?.status, 200);
-  assert.deepEqual(candidateBad?.body, { ok: false, error: "401 invalid api key" });
+  assert.deepEqual(candidateBad?.body, {
+    ok: false,
+    error: "401 invalid api key",
+    target: 'catalog provider "anthropic"',
+  });
+
+  const relayBad = await handler("POST", "/v1/admin/llm-config/test", {
+    baseUrl: "https://relay.example.com/v1",
+    model: "good-model",
+    apiKey: "bad-key",
+  });
+  assert.equal(relayBad?.status, 200);
+  assert.deepEqual(relayBad?.body, {
+    ok: false,
+    error: "401 invalid api key",
+    target: "POST https://relay.example.com/v1/chat/completions",
+  });
 });
 
 test("buildConversationRuntime constructs a custom relay runtime offline", () => {
