@@ -55,6 +55,7 @@ Configuration:
 
 - `ELYSIAN_AGENT_HOST`, default `127.0.0.1`
 - `ELYSIAN_AGENT_PORT`, default `4318`
+- `ELYSIAN_LLM_PROVIDER` + `ELYSIAN_LLM_MODEL` (optional, set together): enable the conversation endpoint by selecting a model from the pi-ai catalog, e.g. `anthropic` + `claude-sonnet-4-6`. Credentials use the provider's standard variable (e.g. `ANTHROPIC_API_KEY`), resolved by pi-ai at request time. An unknown provider/model fails at startup.
 
 Endpoints:
 
@@ -63,7 +64,7 @@ Endpoints:
 - `POST /v1/realm/steps` resolves a versioned batch of agent routine ticks, memory writes, and bounded reflections.
 - `POST /v1/realm/conversations` resolves one stateless conversation turn: reply text, a proposed affinity delta and mood, and proposed conversation memory writes.
 
-The conversation endpoint requires an LLM and is enabled by injecting a runner when embedding the service; `npm start` runs without one and the endpoint reports `501 CONVERSATION_NOT_CONFIGURED` explicitly:
+The conversation endpoint requires an LLM. The service process enables it from the environment variables above (via `@elysian/simulation-agent/service/bootstrap`); without them the endpoint reports `501 CONVERSATION_NOT_CONFIGURED` explicitly. Embedders can also assemble the runner directly for full control:
 
 ```ts
 import { createConversationRunner } from "@elysian/simulation-agent";

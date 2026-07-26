@@ -20,6 +20,9 @@
       ],
       "@elysian/simulation-agent/conversation/pi": [
         "src/conversation/piConversationReplyPort.ts"
+      ],
+      "@elysian/simulation-agent/service/bootstrap": [
+        "src/service/conversationBootstrap.ts"
       ]
     },
     "types": [

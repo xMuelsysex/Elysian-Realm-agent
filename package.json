@@ -21,6 +21,10 @@
     "./conversation/pi": {
       "types": "./dist/conversation/piConversationReplyPort.d.ts",
       "import": "./dist/conversation/piConversationReplyPort.js"
+    },
+    "./service/bootstrap": {
+      "types": "./dist/service/conversationBootstrap.d.ts",
+      "import": "./dist/service/conversationBootstrap.js"
     }
   },
   "files": [

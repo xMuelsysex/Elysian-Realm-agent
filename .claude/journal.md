@@ -1,5 +1,12 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-07-26 模型选择走 pi-ai 目录（env 装配）
+
+- 主人问"pi 的模型选择器能不能直接用"→ 能：pi-ai 的 Models 目录（`builtinModels()` + `getModel` + auth 环境变量解析 + 静态模型数据）就是服务形态的模型选择器；TUI 交互选择器属 pi-coding-agent，不适用 HTTP 服务。
+- 新增 `src/service/conversationBootstrap.ts`（子路径 `./service/bootstrap`，独立于 `./service` barrel——纯 tick 嵌入方不加载 pi 与全量 provider 注册）：`ELYSIAN_LLM_PROVIDER`+`ELYSIAN_LLM_MODEL` 成对配置，未配置→undefined（端点 501），半配置/目录查无→启动时显式 throw。
+- main.ts 接线并打印能力状态；`.env.example`、README 更新。目录查询离线可用（构建期打包的静态数据）。
+- 验证：90 tests pass；smoke 双分支（无 env→无对话能力；有 env→readyz 含 realm-conversation.v1，模型 anthropic/claude-fable-5）。
+
 ## 2026-07-26 双轨架构落地：pi 集成 + affect + 对话轨 + 闭环
 
 - 方向决策（主人拍板）：双轨并存——tick 驱动日常 routine（确定性），对话事件走 pi 会话循环，共享同一记忆/情感库；项目最终形态是"情感的载体"（参考 astrbot_plugin_self_learning 的理念，AGPL 协议、只借鉴思路零代码搬运）。

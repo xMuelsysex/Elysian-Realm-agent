@@ -3,12 +3,22 @@ import {
   startAgentService,
   stopAgentService,
 } from "./agentService.js";
+import { createConversationRunnerFromEnv } from "./conversationBootstrap.js";
 
 try {
   const config = parseAgentServiceConfig();
-  const running = await startAgentService(config);
+  const conversationRunner = createConversationRunnerFromEnv();
+  const running = await startAgentService(
+    config,
+    conversationRunner ? { conversationRunner } : {},
+  );
   console.log(
     `elysian-realm-agent listening on http://${running.address.address}:${running.address.port}`,
+  );
+  console.log(
+    conversationRunner
+      ? `conversation endpoint enabled via ${process.env.ELYSIAN_LLM_PROVIDER}/${process.env.ELYSIAN_LLM_MODEL}`
+      : "conversation endpoint disabled (set ELYSIAN_LLM_PROVIDER and ELYSIAN_LLM_MODEL to enable)",
   );
 
   let shutdownStarted = false;
