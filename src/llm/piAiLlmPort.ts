@@ -40,6 +40,11 @@ export interface PiAiCompletionClient {
 export interface PiAiLlmPortOptions {
   /** Overrides the reported port name; defaults to `pi-ai:<provider>`. */
   name?: string;
+  /**
+   * Explicit API key for the model's provider. When absent, pi-ai resolves
+   * auth from the provider's standard environment variables.
+   */
+  apiKey?: string;
 }
 
 /**
@@ -64,7 +69,7 @@ export function createPiAiLlmPort(
       const completion = await client.completeSimple(
         model,
         context,
-        toPiAiOptions(request, requestOptions),
+        toPiAiOptions(request, requestOptions, options.apiKey),
       );
       return toCompletionLike(completion);
     },
@@ -121,10 +126,12 @@ function toPiAiMessage(message: LlmChatMessageLike, model: Model<Api>): Message 
 function toPiAiOptions(
   request: LlmChatRequestLike,
   options?: LlmRequestOptionsLike,
+  apiKey?: string,
 ): SimpleStreamOptions | undefined {
   const result: SimpleStreamOptions = {};
   if (request.temperature !== undefined) result.temperature = request.temperature;
   if (request.maxTokens !== undefined) result.maxTokens = request.maxTokens;
+  if (apiKey !== undefined) result.apiKey = apiKey;
   const signal = combineSignals(options);
   if (signal) result.signal = signal;
   return Object.keys(result).length > 0 ? result : undefined;

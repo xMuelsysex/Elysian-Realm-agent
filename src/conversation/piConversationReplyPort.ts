@@ -22,6 +22,11 @@ export interface PiConversationReplyPortDeps {
   /** Production: `models.streamSimple.bind(models)`. Tests: a fake stream. */
   streamFn: StreamFn;
   model: Model<Api>;
+  /**
+   * Explicit API key for the model's provider. When absent, pi-ai resolves
+   * auth from the provider's standard environment variables.
+   */
+  apiKey?: string;
 }
 
 export function createPiConversationReplyPort(
@@ -37,6 +42,7 @@ export function createPiConversationReplyPort(
         },
         streamFn: deps.streamFn,
         sessionId: input.conversationId,
+        ...(deps.apiKey !== undefined ? { getApiKey: () => deps.apiKey } : {}),
       });
 
       await agent.prompt(input.message);

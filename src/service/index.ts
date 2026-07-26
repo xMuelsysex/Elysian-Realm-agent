@@ -8,6 +8,9 @@ export {
   stopAgentService,
   type AgentServiceConfig,
   type AgentServiceOptions,
+  type AdminOptions,
+  type AdminRequestHandler,
+  type AdminRequestResult,
   type RunningAgentService,
 } from "./agentService.js";
 export {

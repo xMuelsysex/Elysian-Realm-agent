@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { timingSafeEqual } from "node:crypto";
 import type { ConversationRunner } from "../conversation/conversationRunner.js";
 import {
   RealmConversationValidationError,
@@ -21,12 +22,42 @@ export interface AgentServiceConfig {
 }
 
 /**
+ * Result of an admin API call, or undefined when the handler does not own the
+ * route. Pure data so the service barrel stays free of pi imports; the real
+ * handler is assembled in "./service/bootstrap".
+ */
+export interface AdminRequestResult {
+  status: number;
+  body: unknown;
+}
+
+export type AdminRequestHandler = (
+  method: string,
+  path: string,
+  body: unknown,
+) => Promise<AdminRequestResult | undefined>;
+
+export interface AdminOptions {
+  handler: AdminRequestHandler;
+  /** HTML served at GET /admin. */
+  page?: string;
+  /**
+   * Bearer token required for every admin route. The assembly point decides:
+   * loopback binds may omit it; non-loopback binds must set one (main.ts
+   * refuses to enable admin without it).
+   */
+  token?: string;
+}
+
+/**
  * Optional service capabilities. The conversation endpoint requires an LLM
- * and is only enabled when the embedding host injects a runner; without one
- * the endpoint reports 501 explicitly rather than pretending to work.
+ * and is only enabled when a runner (or runner source) is provided; without
+ * one the endpoint reports 501 explicitly rather than pretending to work.
+ * Passing a function makes the capability dynamic (admin hot-reconfiguration).
  */
 export interface AgentServiceOptions {
-  conversationRunner?: ConversationRunner;
+  conversationRunner?: ConversationRunner | (() => ConversationRunner | undefined);
+  admin?: AdminOptions;
 }
 
 export interface RunningAgentService {
@@ -129,6 +160,10 @@ async function handleRequest(
 ): Promise<void> {
   const method = request.method ?? "GET";
   const path = parsePath(request.url);
+  const resolveRunner = (): ConversationRunner | undefined =>
+    typeof options.conversationRunner === "function"
+      ? options.conversationRunner()
+      : options.conversationRunner;
   if (path === undefined) {
     writeJson(response, 400, { error: { code: "INVALID_REQUEST_URL", message: "request URL is invalid" } }, method === "HEAD");
     return;
@@ -149,9 +184,14 @@ async function handleRequest(
         "affect",
         "reflection",
         "realm-agent-step.v1",
-        ...(options.conversationRunner ? ["realm-conversation.v1"] : []),
+        ...(resolveRunner() ? ["realm-conversation.v1"] : []),
       ],
     }, method === "HEAD");
+    return;
+  }
+
+  if (path === "/admin" || path.startsWith("/v1/admin/")) {
+    await handleAdminRequest(request, response, method, path, options.admin);
     return;
   }
 
@@ -187,7 +227,7 @@ async function handleRequest(
       return;
     }
 
-    const runner = options.conversationRunner;
+    const runner = resolveRunner();
     if (!runner) {
       writeJson(response, 501, {
         error: {
@@ -223,6 +263,80 @@ async function handleRequest(
   }
 
   writeJson(response, 404, { error: { code: "NOT_FOUND", message: "route not found" } }, method === "HEAD");
+}
+
+async function handleAdminRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  method: string,
+  path: string,
+  admin: AdminOptions | undefined,
+): Promise<void> {
+  if (!admin) {
+    writeJson(response, 404, { error: { code: "ADMIN_NOT_ENABLED", message: "admin interface is not enabled on this service instance" } }, method === "HEAD");
+    return;
+  }
+
+  if (admin.token !== undefined && !hasValidAdminToken(request, admin.token)) {
+    writeJson(response, 403, { error: { code: "ADMIN_FORBIDDEN", message: "missing or invalid admin token" } }, false);
+    return;
+  }
+
+  if (path === "/admin") {
+    if (method !== "GET" && method !== "HEAD") {
+      response.setHeader("allow", "GET, HEAD");
+      writeJson(response, 405, { error: { code: "METHOD_NOT_ALLOWED", message: "route requires GET" } }, false);
+      return;
+    }
+    if (admin.page === undefined) {
+      writeJson(response, 404, { error: { code: "ADMIN_PAGE_NOT_CONFIGURED", message: "no admin page configured" } }, method === "HEAD");
+      return;
+    }
+    const payload = admin.page;
+    response.statusCode = 200;
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    response.setHeader("cache-control", "no-store");
+    response.setHeader("content-length", Buffer.byteLength(payload));
+    response.end(method === "HEAD" ? undefined : payload);
+    return;
+  }
+
+  let body: unknown;
+  if (method === "POST" || method === "PUT") {
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      // Allow empty bodies for admin POSTs (e.g. test with current config).
+      if (parsed.code === "INVALID_JSON" && parsed.message.includes("must contain JSON")) {
+        body = undefined;
+      } else {
+        writeJson(response, parsed.status, { error: { code: parsed.code, message: parsed.message } }, false);
+        return;
+      }
+    } else {
+      body = parsed.value;
+    }
+  }
+
+  const result = await admin.handler(method, path, body);
+  if (result === undefined) {
+    writeJson(response, 404, { error: { code: "NOT_FOUND", message: "admin route not found" } }, false);
+    return;
+  }
+  writeJson(response, result.status, result.body, false);
+}
+
+function hasValidAdminToken(request: IncomingMessage, token: string): boolean {
+  const header = request.headers.authorization;
+  if (typeof header !== "string") {
+    return false;
+  }
+  const match = /^Bearer\s+(.+)$/.exec(header);
+  if (!match) {
+    return false;
+  }
+  const provided = Buffer.from(match[1]);
+  const expected = Buffer.from(token);
+  return provided.length === expected.length && timingSafeEqual(provided, expected);
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<

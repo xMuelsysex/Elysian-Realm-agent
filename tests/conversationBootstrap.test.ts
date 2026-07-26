@@ -1,63 +1,227 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import type { ConversationRunner, LlmPort } from "@elysian/simulation-agent";
 import {
-  createConversationRunnerFromEnv,
-  parseConversationLlmConfig,
+  createConversationHub,
+  loadLlmConfig,
+  saveLlmConfig,
+  type ConversationRuntime,
+  type StoredLlmConfig,
 } from "@elysian/simulation-agent/service/bootstrap";
 
-test("returns undefined when conversation llm env is entirely absent", () => {
-  assert.equal(parseConversationLlmConfig({}), undefined);
-  assert.equal(createConversationRunnerFromEnv({}), undefined);
-});
+function tempConfigPath(): string {
+  return join(mkdtempSync(join(tmpdir(), "elysian-hub-")), "credentials.json");
+}
 
-test("rejects half-configured or empty llm env visibly", () => {
-  assert.throws(
-    () => parseConversationLlmConfig({ ELYSIAN_LLM_PROVIDER: "anthropic" }),
-    /must both be set/,
-  );
-  assert.throws(
-    () => parseConversationLlmConfig({ ELYSIAN_LLM_MODEL: "some-model" }),
-    /must both be set/,
-  );
-  assert.throws(
-    () =>
-      parseConversationLlmConfig({
-        ELYSIAN_LLM_PROVIDER: " ",
-        ELYSIAN_LLM_MODEL: "some-model",
-      }),
-    /must both be set/,
-  );
-});
+function fakeRuntimeFactory(): {
+  buildRuntime: (config: StoredLlmConfig) => ConversationRuntime;
+  built: StoredLlmConfig[];
+  probeReplies: string[];
+} {
+  const built: StoredLlmConfig[] = [];
+  const probeReplies: string[] = [];
+  return {
+    built,
+    probeReplies,
+    buildRuntime(config) {
+      if (config.model === "unknown-model") {
+        throw new Error(`model "${config.model}" is not in the pi-ai catalog`);
+      }
+      built.push(config);
+      const runner: ConversationRunner = {
+        run: () => Promise.reject(new Error("not used in this test")),
+      };
+      const probeLlm: LlmPort = {
+        name: `fake:${config.provider}`,
+        model: config.model,
+        completeChat(request) {
+          probeReplies.push(String(request.messages[0]?.content));
+          if (config.apiKey === "bad-key") {
+            return Promise.reject(new Error("401 invalid api key"));
+          }
+          return Promise.resolve({ content: "pong" });
+        },
+      };
+      return { runner, probeLlm };
+    },
+  };
+}
 
-test("fails at startup for models missing from the pi-ai catalog", () => {
-  assert.throws(
-    () =>
-      createConversationRunnerFromEnv({
-        ELYSIAN_LLM_PROVIDER: "anthropic",
-        ELYSIAN_LLM_MODEL: "definitely-not-a-model",
-      }),
-    /"definitely-not-a-model" of provider "anthropic" is not in the pi-ai catalog/,
-  );
-  assert.throws(
-    () =>
-      createConversationRunnerFromEnv({
-        ELYSIAN_LLM_PROVIDER: "no-such-provider",
-        ELYSIAN_LLM_MODEL: "whatever",
-      }),
-    /not in the pi-ai catalog/,
-  );
-});
-
-test("builds a runner for a catalog model without touching the network", () => {
-  const anyAnthropicModel = builtinModels().getModels("anthropic")[0];
-  assert.ok(anyAnthropicModel, "pi-ai catalog must list anthropic models");
-
-  const runner = createConversationRunnerFromEnv({
-    ELYSIAN_LLM_PROVIDER: "anthropic",
-    ELYSIAN_LLM_MODEL: anyAnthropicModel.id,
+test("hub starts unconfigured when neither env nor credentials file exist", () => {
+  const factory = fakeRuntimeFactory();
+  const hub = createConversationHub({}, {
+    credentialsPath: tempConfigPath(),
+    buildRuntime: factory.buildRuntime,
   });
-  assert.ok(runner);
-  assert.equal(typeof runner.run, "function");
+  assert.equal(hub.getRunner(), undefined);
+  assert.deepEqual(hub.getStatus(), { configured: false, configSource: "none", keySource: "none" });
+});
+
+test("env config takes priority and pins admin updates", async () => {
+  const factory = fakeRuntimeFactory();
+  const path = tempConfigPath();
+  saveLlmConfig(path, { provider: "file-provider", model: "file-model" });
+
+  const hub = createConversationHub(
+    { ELYSIAN_LLM_PROVIDER: "env-provider", ELYSIAN_LLM_MODEL: "env-model" },
+    { credentialsPath: path, buildRuntime: factory.buildRuntime },
+  );
+
+  assert.ok(hub.getRunner());
+  const status = hub.getStatus();
+  assert.equal(status.provider, "env-provider");
+  assert.equal(status.configSource, "env");
+  assert.equal(status.keySource, "env");
+
+  const handler = hub.createAdminHandler();
+  const result = await handler("POST", "/v1/admin/llm-config", {
+    provider: "x",
+    model: "y",
+  });
+  assert.equal(result?.status, 409);
+});
+
+test("credentials file configures the hub when env is absent", () => {
+  const factory = fakeRuntimeFactory();
+  const path = tempConfigPath();
+  saveLlmConfig(path, { provider: "anthropic", model: "some-model", apiKey: "sk-stored" });
+
+  const hub = createConversationHub({}, {
+    credentialsPath: path,
+    buildRuntime: factory.buildRuntime,
+  });
+
+  assert.ok(hub.getRunner());
+  const status = hub.getStatus();
+  assert.equal(status.configSource, "file");
+  assert.equal(status.keySource, "stored");
+  assert.deepEqual(factory.built[0], {
+    provider: "anthropic",
+    model: "some-model",
+    apiKey: "sk-stored",
+  });
+});
+
+test("a broken credentials file degrades to unconfigured instead of crashing", () => {
+  const factory = fakeRuntimeFactory();
+  const path = tempConfigPath();
+  writeFileSync(path, "{broken");
+
+  const hub = createConversationHub({}, {
+    credentialsPath: path,
+    buildRuntime: factory.buildRuntime,
+  });
+  assert.equal(hub.getRunner(), undefined);
+  assert.equal(hub.getStatus().configured, false);
+});
+
+test("half-configured env fails fast", () => {
+  const factory = fakeRuntimeFactory();
+  assert.throws(
+    () =>
+      createConversationHub(
+        { ELYSIAN_LLM_PROVIDER: "anthropic" },
+        { credentialsPath: tempConfigPath(), buildRuntime: factory.buildRuntime },
+      ),
+    /must both be set/,
+  );
+});
+
+test("admin save validates, persists 0600, and hot-swaps the runner", async () => {
+  const factory = fakeRuntimeFactory();
+  const path = tempConfigPath();
+  const hub = createConversationHub({}, {
+    credentialsPath: path,
+    buildRuntime: factory.buildRuntime,
+  });
+  const handler = hub.createAdminHandler();
+
+  assert.equal(hub.getRunner(), undefined);
+
+  const saved = await handler("POST", "/v1/admin/llm-config", {
+    provider: "anthropic",
+    model: "good-model",
+    apiKey: "sk-new",
+  });
+  assert.equal(saved?.status, 200);
+  assert.ok(hub.getRunner(), "runner must be live immediately after save");
+  assert.equal(hub.getStatus().configSource, "admin");
+  assert.equal(hub.getStatus().keySource, "stored");
+
+  assert.equal(statSync(path).mode & 0o777, 0o600);
+  assert.deepEqual(loadLlmConfig(path), {
+    provider: "anthropic",
+    model: "good-model",
+    apiKey: "sk-new",
+  });
+});
+
+test("admin save rejects unknown models without persisting or swapping", async () => {
+  const factory = fakeRuntimeFactory();
+  const path = tempConfigPath();
+  const hub = createConversationHub({}, {
+    credentialsPath: path,
+    buildRuntime: factory.buildRuntime,
+  });
+  const handler = hub.createAdminHandler();
+
+  const result = await handler("POST", "/v1/admin/llm-config", {
+    provider: "anthropic",
+    model: "unknown-model",
+  });
+  assert.equal(result?.status, 400);
+  assert.match(String((result?.body as { error: { message: string } }).error.message), /not in the pi-ai catalog/);
+  assert.equal(hub.getRunner(), undefined);
+  assert.equal(loadLlmConfig(path), undefined, "rejected config must not be persisted");
+});
+
+test("admin test endpoint probes the current or a candidate config", async () => {
+  const factory = fakeRuntimeFactory();
+  const hub = createConversationHub({}, {
+    credentialsPath: tempConfigPath(),
+    buildRuntime: factory.buildRuntime,
+  });
+  const handler = hub.createAdminHandler();
+
+  const unconfigured = await handler("POST", "/v1/admin/llm-config/test", undefined);
+  assert.equal(unconfigured?.status, 400);
+
+  const candidateOk = await handler("POST", "/v1/admin/llm-config/test", {
+    provider: "anthropic",
+    model: "good-model",
+    apiKey: "sk-probe",
+  });
+  assert.equal(candidateOk?.status, 200);
+  assert.deepEqual(candidateOk?.body, { ok: true, model: "good-model", content: "pong" });
+
+  const candidateBad = await handler("POST", "/v1/admin/llm-config/test", {
+    provider: "anthropic",
+    model: "good-model",
+    apiKey: "bad-key",
+  });
+  assert.equal(candidateBad?.status, 200);
+  assert.deepEqual(candidateBad?.body, { ok: false, error: "401 invalid api key" });
+});
+
+test("admin catalog lists real providers and models offline", async () => {
+  const factory = fakeRuntimeFactory();
+  const hub = createConversationHub({}, {
+    credentialsPath: tempConfigPath(),
+    buildRuntime: factory.buildRuntime,
+  });
+  const handler = hub.createAdminHandler();
+
+  const result = await handler("GET", "/v1/admin/catalog", undefined);
+  assert.equal(result?.status, 200);
+  const providers = (result?.body as { providers: Array<{ id: string; models: Array<{ id: string }> }> }).providers;
+  assert.ok(providers.length > 10, "catalog must list built-in providers");
+  const anthropic = providers.find((entry) => entry.id === "anthropic");
+  assert.ok(anthropic && anthropic.models.length > 0, "anthropic models must be listed");
+
+  const unknownRoute = await handler("GET", "/v1/admin/nope", undefined);
+  assert.equal(unknownRoute, undefined);
 });

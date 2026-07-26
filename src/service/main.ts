@@ -2,23 +2,47 @@ import {
   parseAgentServiceConfig,
   startAgentService,
   stopAgentService,
+  type AdminOptions,
 } from "./agentService.js";
-import { createConversationRunnerFromEnv } from "./conversationBootstrap.js";
+import { ADMIN_PAGE_HTML } from "./adminPage.js";
+import { createConversationHub } from "./conversationBootstrap.js";
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 
 try {
   const config = parseAgentServiceConfig();
-  const conversationRunner = createConversationRunnerFromEnv();
-  const running = await startAgentService(
-    config,
-    conversationRunner ? { conversationRunner } : {},
-  );
+  const hub = createConversationHub();
+
+  // Admin gate decision lives here at the assembly point: loopback binds get
+  // the admin interface as-is; non-loopback binds require an explicit token,
+  // otherwise admin stays off and we say so instead of exposing it silently.
+  const adminToken = process.env.ELYSIAN_ADMIN_TOKEN;
+  let admin: AdminOptions | undefined;
+  if (LOOPBACK_HOSTS.has(config.host) || adminToken) {
+    admin = {
+      handler: hub.createAdminHandler(),
+      page: ADMIN_PAGE_HTML,
+      ...(adminToken ? { token: adminToken } : {}),
+    };
+  } else {
+    console.warn(
+      "admin interface disabled: binding to a non-loopback host requires ELYSIAN_ADMIN_TOKEN",
+    );
+  }
+
+  const running = await startAgentService(config, {
+    conversationRunner: () => hub.getRunner(),
+    ...(admin ? { admin } : {}),
+  });
   console.log(
     `elysian-realm-agent listening on http://${running.address.address}:${running.address.port}`,
   );
+  const status = hub.getStatus();
   console.log(
-    conversationRunner
-      ? `conversation endpoint enabled via ${process.env.ELYSIAN_LLM_PROVIDER}/${process.env.ELYSIAN_LLM_MODEL}`
-      : "conversation endpoint disabled (set ELYSIAN_LLM_PROVIDER and ELYSIAN_LLM_MODEL to enable)",
+    status.configured
+      ? `conversation endpoint enabled via ${status.provider}/${status.model} (config: ${status.configSource}, key: ${status.keySource})`
+      : "conversation endpoint not configured" +
+          (admin ? ` — open http://${config.host}:${running.address.port}/admin to set it up` : ""),
   );
 
   let shutdownStarted = false;

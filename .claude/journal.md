@@ -1,5 +1,11 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-07-26 网页 admin 入口：LLM key 配置与热装配
+
+- 改动：`GET /admin` 内嵌单页（provider/model 下拉 + key + 测试连接）、`/v1/admin/llm-config`(+/test、catalog) API、key 落盘 `~/.elysian-realm/credentials.json`（0600 原子写，`ELYSIAN_CREDENTIALS_PATH` 可覆盖）、`createConversationHub` 热装配（env > file > admin，env 时 pin 住 admin 改动 409）、`AgentServiceOptions.conversationRunner` 放宽为函数联合类型（readyz 动态反映）。关键文件：`conversationBootstrap.ts`（hub）、`llmConfigStore.ts`、`adminPage.ts`、`agentService.ts`。
+- 学到：admin handler 用纯数据接口（`AdminRequestHandler`）注入，service barrel 维持零 pi；保存顺序必须 build（验证）→ save（落盘）→ swap（热替换），运行态永不与磁盘分叉；token 校验用 `timingSafeEqual`。
+- 坑：主人 pi CLI 的订阅 OAuth 凭据会被 pi-ai credential store 自动解析但 provider 返回 403 forbidden（订阅凭据只允许官方客户端）——需要 standalone API key；测试连接按钮把这个错误清晰显示了出来。
+
 ## 2026-07-26 模型选择走 pi-ai 目录（env 装配）
 
 - 主人问"pi 的模型选择器能不能直接用"→ 能：pi-ai 的 Models 目录（`builtinModels()` + `getModel` + auth 环境变量解析 + 静态模型数据）就是服务形态的模型选择器；TUI 交互选择器属 pi-coding-agent，不适用 HTTP 服务。

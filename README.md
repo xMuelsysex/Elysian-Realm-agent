@@ -61,10 +61,21 @@ Endpoints:
 
 - `GET /healthz` reports process health.
 - `GET /readyz` reports loaded cognitive capabilities.
+- `GET /admin` serves a web UI for LLM configuration (see below).
 - `POST /v1/realm/steps` resolves a versioned batch of agent routine ticks, memory writes, and bounded reflections.
 - `POST /v1/realm/conversations` resolves one stateless conversation turn: reply text, a proposed affinity delta and mood, and proposed conversation memory writes.
 
-The conversation endpoint requires an LLM. The service process enables it from the environment variables above (via `@elysian/simulation-agent/service/bootstrap`); without them the endpoint reports `501 CONVERSATION_NOT_CONFIGURED` explicitly. Embedders can also assemble the runner directly for full control:
+### Configuring the conversation LLM
+
+Three ways, in priority order:
+
+1. **Environment variables** — `ELYSIAN_LLM_PROVIDER` + `ELYSIAN_LLM_MODEL` (auth via the provider's standard variable). When set, the selection is pinned and the admin UI rejects changes.
+2. **Admin web UI** — open `http://127.0.0.1:4318/admin`, pick a provider/model from the pi-ai catalog, optionally paste an API key, test the connection, save. The configuration hot-loads (no restart) and persists to `~/.elysian-realm/credentials.json` (mode 0600, override with `ELYSIAN_CREDENTIALS_PATH`). Stored keys are never echoed back by the API.
+3. **Embedding** — assemble a runner in code (see below) for full control.
+
+Admin security boundary: the admin interface is enabled as-is only for loopback binds. Binding to a non-loopback host requires `ELYSIAN_ADMIN_TOKEN` (sent as `Authorization: Bearer <token>`); without it the admin interface stays off and the service says so at startup.
+
+The conversation endpoint requires an LLM. Without any configuration it reports `501 CONVERSATION_NOT_CONFIGURED` explicitly. Embedders can also assemble the runner directly for full control:
 
 ```ts
 import { createConversationRunner } from "@elysian/simulation-agent";
