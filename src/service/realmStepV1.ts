@@ -44,8 +44,9 @@ export interface RealmAgentPerceptionV1 {
 }
 
 export interface RealmMemoryMetadataV1 {
-  stepId: string;
-  source: "engine" | "seed";
+  /** Present on step-produced memories; conversation memories carry conversationId instead. */
+  stepId?: string;
+  source: "engine" | "seed" | "conversation";
   period?: RealmRoutinePeriodV1;
   locationId?: string;
   proposalKind?: string;

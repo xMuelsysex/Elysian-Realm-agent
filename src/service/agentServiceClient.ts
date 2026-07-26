@@ -4,6 +4,11 @@ import {
   type RealmAgentStepRequestV1,
   type RealmAgentStepResponseV1,
 } from "./realmStepV1.js";
+import {
+  REALM_CONVERSATION_SCHEMA_VERSION,
+  type RealmConversationRequestV1,
+  type RealmConversationResponseV1,
+} from "./realmConversationV1.js";
 
 export interface AgentServiceClientOptions {
   baseUrl: string;
@@ -38,11 +43,21 @@ export class AgentServiceClient {
   }
 
   async resolveRealmStep(request: RealmAgentStepRequestV1): Promise<RealmAgentStepResponseV1> {
+    const body = await this.postJson("/v1/realm/steps", request);
+    return validateStepResponse(body, request.stepId);
+  }
+
+  async resolveConversation(request: RealmConversationRequestV1): Promise<RealmConversationResponseV1> {
+    const body = await this.postJson("/v1/realm/conversations", request);
+    return validateConversationResponse(body, request.conversationId);
+  }
+
+  private async postJson(path: string, request: unknown): Promise<unknown> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
-      const response = await this.fetchImpl(`${this.baseUrl}/v1/realm/steps`, {
+      const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(request),
@@ -57,7 +72,7 @@ export class AgentServiceClient {
           response.status,
         );
       }
-      return validateResponse(body, request.stepId);
+      return body;
     } catch (error) {
       if (error instanceof AgentServiceClientError) {
         throw error;
@@ -95,7 +110,7 @@ async function parseJsonResponse(response: Response): Promise<unknown> {
   }
 }
 
-function validateResponse(input: unknown, expectedStepId: string): RealmAgentStepResponseV1 {
+function validateStepResponse(input: unknown, expectedStepId: string): RealmAgentStepResponseV1 {
   if (!isRecord(input) || input.schemaVersion !== REALM_AGENT_STEP_SCHEMA_VERSION) {
     throw new AgentServiceClientError(
       "INVALID_AGENT_SERVICE_RESPONSE",
@@ -115,6 +130,31 @@ function validateResponse(input: unknown, expectedStepId: string): RealmAgentSte
     );
   }
   return input as unknown as RealmAgentStepResponseV1;
+}
+
+function validateConversationResponse(
+  input: unknown,
+  expectedConversationId: string,
+): RealmConversationResponseV1 {
+  if (!isRecord(input) || input.schemaVersion !== REALM_CONVERSATION_SCHEMA_VERSION) {
+    throw new AgentServiceClientError(
+      "INVALID_AGENT_SERVICE_RESPONSE",
+      `agent service response schemaVersion must be ${REALM_CONVERSATION_SCHEMA_VERSION}`,
+    );
+  }
+  if (input.conversationId !== expectedConversationId) {
+    throw new AgentServiceClientError(
+      "INVALID_AGENT_SERVICE_RESPONSE",
+      "agent service response conversationId does not match the request",
+    );
+  }
+  if (!isRecord(input.reply) || typeof input.reply.content !== "string") {
+    throw new AgentServiceClientError(
+      "INVALID_AGENT_SERVICE_RESPONSE",
+      "agent service response reply.content must be a string",
+    );
+  }
+  return input as unknown as RealmConversationResponseV1;
 }
 
 function parseServiceError(input: unknown): AgentServiceErrorBody | undefined {

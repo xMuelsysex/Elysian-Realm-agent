@@ -154,7 +154,7 @@ test("service exposes health readiness versioned execution and explicit HTTP fai
   assert.deepEqual(await readyResponse.json(), {
     status: "ready",
     service: "elysian-realm-agent",
-    capabilities: ["cognitive-loop", "memory", "reflection", "realm-agent-step.v1"],
+    capabilities: ["cognitive-loop", "memory", "affect", "reflection", "realm-agent-step.v1"],
   });
 
   const client = new AgentServiceClient({ baseUrl });

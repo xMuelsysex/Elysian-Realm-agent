@@ -1,5 +1,10 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import type { ConversationRunner } from "../conversation/conversationRunner.js";
+import {
+  RealmConversationValidationError,
+  executeRealmConversationV1,
+} from "./realmConversationExecutor.js";
 import {
   RealmAgentStepValidationError,
   executeRealmAgentStepV1,
@@ -13,6 +18,15 @@ const MAX_BODY_BYTES = 1024 * 1024;
 export interface AgentServiceConfig {
   host: string;
   port: number;
+}
+
+/**
+ * Optional service capabilities. The conversation endpoint requires an LLM
+ * and is only enabled when the embedding host injects a runner; without one
+ * the endpoint reports 501 explicitly rather than pretending to work.
+ */
+export interface AgentServiceOptions {
+  conversationRunner?: ConversationRunner;
 }
 
 export interface RunningAgentService {
@@ -41,9 +55,9 @@ export function parseAgentServiceConfig(
   return { host, port };
 }
 
-export function createAgentService(): Server {
+export function createAgentService(options: AgentServiceOptions = {}): Server {
   return createServer((request, response) => {
-    void handleRequest(request, response).catch((error) => {
+    void handleRequest(request, response, options).catch((error) => {
       if (response.headersSent) {
         response.destroy(error instanceof Error ? error : undefined);
         return;
@@ -58,8 +72,11 @@ export function createAgentService(): Server {
   });
 }
 
-export async function startAgentService(config: AgentServiceConfig): Promise<RunningAgentService> {
-  const server = createAgentService();
+export async function startAgentService(
+  config: AgentServiceConfig,
+  options: AgentServiceOptions = {},
+): Promise<RunningAgentService> {
+  const server = createAgentService(options);
 
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error): void => {
@@ -105,7 +122,11 @@ export async function stopAgentService(server: Server): Promise<void> {
   });
 }
 
-async function handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+async function handleRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: AgentServiceOptions,
+): Promise<void> {
   const method = request.method ?? "GET";
   const path = parsePath(request.url);
   if (path === undefined) {
@@ -122,7 +143,14 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
     writeJson(response, 200, {
       status: "ready",
       service: AGENT_SERVICE_NAME,
-      capabilities: ["cognitive-loop", "memory", "reflection", "realm-agent-step.v1"],
+      capabilities: [
+        "cognitive-loop",
+        "memory",
+        "affect",
+        "reflection",
+        "realm-agent-step.v1",
+        ...(options.conversationRunner ? ["realm-conversation.v1"] : []),
+      ],
     }, method === "HEAD");
     return;
   }
@@ -145,6 +173,42 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
     } catch (error) {
       if (error instanceof RealmAgentStepValidationError) {
         writeJson(response, 400, { error: { code: "INVALID_REALM_AGENT_STEP", message: error.message } }, false);
+        return;
+      }
+      throw error;
+    }
+    return;
+  }
+
+  if (path === "/v1/realm/conversations") {
+    if (method !== "POST") {
+      response.setHeader("allow", "POST");
+      writeJson(response, 405, { error: { code: "METHOD_NOT_ALLOWED", message: "route requires POST" } }, false);
+      return;
+    }
+
+    const runner = options.conversationRunner;
+    if (!runner) {
+      writeJson(response, 501, {
+        error: {
+          code: "CONVERSATION_NOT_CONFIGURED",
+          message: "this service instance was started without a conversation runner",
+        },
+      }, false);
+      return;
+    }
+
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      writeJson(response, parsed.status, { error: { code: parsed.code, message: parsed.message } }, false);
+      return;
+    }
+
+    try {
+      writeJson(response, 200, await executeRealmConversationV1(parsed.value, runner), false);
+    } catch (error) {
+      if (error instanceof RealmConversationValidationError) {
+        writeJson(response, 400, { error: { code: "INVALID_REALM_CONVERSATION", message: error.message } }, false);
         return;
       }
       throw error;

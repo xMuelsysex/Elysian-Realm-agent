@@ -17,6 +17,9 @@
       ],
       "@elysian/simulation-agent/llm/pi-ai": [
         "src/llm/piAiLlmPort.ts"
+      ],
+      "@elysian/simulation-agent/conversation/pi": [
+        "src/conversation/piConversationReplyPort.ts"
       ]
     },
     "types": [

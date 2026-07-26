@@ -17,6 +17,10 @@
     "./llm/pi-ai": {
       "types": "./dist/llm/piAiLlmPort.d.ts",
       "import": "./dist/llm/piAiLlmPort.js"
+    },
+    "./conversation/pi": {
+      "types": "./dist/conversation/piConversationReplyPort.d.ts",
+      "import": "./dist/conversation/piConversationReplyPort.js"
     }
   },
   "files": [
@@ -33,6 +37,7 @@
     "node": ">=22.19.0"
   },
   "dependencies": {
+    "@earendil-works/pi-agent-core": "0.82.1",
     "@earendil-works/pi-ai": "0.82.1"
   },
   "devDependencies": {
