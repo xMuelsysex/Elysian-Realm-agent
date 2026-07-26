@@ -30,6 +30,8 @@ export interface RealmConversationParticipantV1 {
 export interface RealmConversationTurnV1 {
   role: "participant" | "agent";
   content: string;
+  /** ISO timestamp of the turn, when the host tracks it; enables "time since last chat". */
+  at?: string;
 }
 
 export interface RealmConversationMessageV1 {
@@ -73,6 +75,11 @@ export interface RealmConversationAffectV1 {
   affinityDelta?: number;
   /** Proposed mood update. */
   mood?: { mood: string; intensity: number };
+  /**
+   * Proposed importance (0-9) for this exchange's conversation memories:
+   * promises and major events high, small talk low.
+   */
+  memoryImportance?: number;
 }
 
 export interface RealmConversationResponseV1 {

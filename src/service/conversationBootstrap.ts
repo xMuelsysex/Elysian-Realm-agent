@@ -66,6 +66,8 @@ export interface ConversationHubStatus {
 
 export interface ConversationHub {
   getRunner(): ConversationRunner | undefined;
+  /** The analysis-shaped LlmPort of the active runtime (narratives, reflection, probes). */
+  getLlm(): LlmPort | undefined;
   getStatus(): ConversationHubStatus;
   /** Validate, build, and hot-swap a runner from the given config (no persistence). */
   applyConfig(config: StoredLlmConfig, source: "file" | "admin"): void;
@@ -141,6 +143,8 @@ export function createConversationHub(
 
   const hub: ConversationHub = {
     getRunner: () => runtime?.runner,
+
+    getLlm: () => runtime?.probeLlm,
 
     getStatus: () => ({
       configured: runtime !== undefined,

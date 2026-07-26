@@ -60,12 +60,15 @@ export function createConversationRunner(deps: ConversationRunnerDeps): Conversa
         topK: request.options?.memoryTopK ?? DEFAULT_CONVERSATION_MEMORY_TOP_K,
       });
 
+      const lastTurnAt = [...request.history].reverse().find((turn) => turn.at !== undefined)?.at;
       const systemPrompt = buildConversationSystemPrompt({
         agent: request.agent,
         participant: request.participant,
         relationship: request.relationship,
         mood: request.mood,
         memoryHits: retrieval.hits,
+        now: request.now,
+        ...(lastTurnAt !== undefined ? { lastTurnAt } : {}),
       });
 
       const reply = await deps.reply.generateReply({
@@ -102,7 +105,7 @@ export function createConversationRunner(deps: ConversationRunnerDeps): Conversa
         agentId: request.agent.agentId,
         reply: { content: reply.content },
         affect,
-        memoryWrites: buildConversationMemoryWrites(request, reply.content),
+        memoryWrites: buildConversationMemoryWrites(request, reply.content, affect.memoryImportance),
       };
     },
   };
@@ -111,11 +114,12 @@ export function createConversationRunner(deps: ConversationRunnerDeps): Conversa
 export function buildConversationMemoryWrites(
   request: RealmConversationRequestV1,
   replyContent: string,
+  importance: number = CONVERSATION_MEMORY_IMPORTANCE,
 ): readonly MemoryWrite<RealmMemoryMetadataV1>[] {
   const shared = {
     kind: "conversation" as const,
     createdAt: request.now,
-    importance: CONVERSATION_MEMORY_IMPORTANCE,
+    importance,
     tags: [
       "conversation",
       request.agent.agentId,

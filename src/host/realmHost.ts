@@ -8,19 +8,26 @@
 // No pi imports here: the runner arrives via its port interface.
 
 import type { ConversationRunner } from "../conversation/conversationRunner.js";
+import type { LlmPort } from "../ports/ports.js";
 import {
   REALM_CONVERSATION_SCHEMA_VERSION,
   type RealmConversationTurnV1,
 } from "../service/realmConversationV1.js";
 import {
   REALM_AGENT_STEP_SCHEMA_VERSION,
+  type RealmMemoryMetadataV1,
   type RealmRoutinePeriodV1,
 } from "../service/realmStepV1.js";
 import { executeRealmAgentStepV1 } from "../service/realmStepExecutor.js";
+import { runReflection } from "../reflection/reflectionPlanner.js";
+import { createLlmReflectionPlanner } from "../reflection/llmReflectionPlanner.js";
 import type { AgentMood } from "../affect/affectRecords.js";
+import { runLifeNarrative } from "./lifeNarrative.js";
 import type { RealmStateStore } from "./realmState.js";
 
 const CHAT_HISTORY_WINDOW = 20;
+const NARRATIVE_CONTINUITY_WINDOW = 3;
+const REFLECTION_EVIDENCE_LIMIT = 12;
 
 export interface RealmChatResult {
   agentId: string;
@@ -45,6 +52,17 @@ export interface RealmAgentSummary {
 export interface RealmHostOptions {
   /** Injectable clock for tests. */
   now?: () => Date;
+  /** LLM for life narratives and nightly reflection; absent = deterministic-only ticks. */
+  llm?: () => LlmPort | undefined;
+}
+
+export interface RealmTickReport {
+  period: RealmRoutinePeriodV1;
+  added: number;
+  narratives: number;
+  reflections: number;
+  /** Non-fatal problems (narrative/reflection failures), for logging. */
+  notes: readonly string[];
 }
 
 export function periodOf(hour: number): RealmRoutinePeriodV1 {
@@ -57,6 +75,7 @@ export function periodOf(hour: number): RealmRoutinePeriodV1 {
 export class RealmHost {
   private readonly state: RealmStateStore;
   private readonly runner: () => ConversationRunner | undefined;
+  private readonly llm: () => LlmPort | undefined;
   private readonly now: () => Date;
   private chatCounter = 0;
 
@@ -67,6 +86,7 @@ export class RealmHost {
   ) {
     this.state = state;
     this.runner = runner;
+    this.llm = options.llm ?? (() => undefined);
     this.now = options.now ?? (() => new Date());
   }
 
@@ -129,8 +149,8 @@ export class RealmHost {
       agentId,
       {
         turns: [
-          { role: "participant", content: trimmed },
-          { role: "agent", content: response.reply.content },
+          { role: "participant", content: trimmed, at: now },
+          { role: "agent", content: response.reply.content, at: now },
         ],
         memoryWrites: response.memoryWrites,
         affinityDelta: response.affect.affinityDelta,
@@ -154,8 +174,12 @@ export class RealmHost {
    * Run one tick round if the local (date, period) differs from the persisted
    * last tick — restart-safe: the tick state lives in the data directory, so
    * a restart within the same period never double-ticks.
+   *
+   * With an LLM available, each ticked agent also gets a first-person life
+   * narrative memory, and the night tick runs a daily reflection. Both are
+   * best-effort: failures land in `notes` and never abort the tick.
    */
-  tickIfPeriodChanged(): { period: RealmRoutinePeriodV1; added: number } | undefined {
+  async tickIfPeriodChanged(): Promise<RealmTickReport | undefined> {
     const date = this.now();
     const period = periodOf(date.getHours());
     const localDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -165,7 +189,113 @@ export class RealmHost {
     }
     const added = this.runTick(period, date);
     this.state.setTickState({ date: localDate, period });
-    return { period, added };
+
+    const notes: string[] = [];
+    const narratives = await this.runNarratives(period, date, notes);
+    const reflections = period === "night" ? await this.runDailyReflection(date, notes) : 0;
+
+    return { period, added, narratives, reflections, notes };
+  }
+
+  private async runNarratives(
+    period: RealmRoutinePeriodV1,
+    date: Date,
+    notes: string[],
+  ): Promise<number> {
+    const llm = this.llm();
+    if (!llm) {
+      return 0;
+    }
+    const now = date.toISOString();
+    let written = 0;
+    for (const agent of this.state.config.agents) {
+      const routine = agent.routines.find((entry) => entry.period === period);
+      if (!routine) {
+        continue;
+      }
+      const recentNarratives = this.state
+        .memoriesFor(agent.agentId)
+        .filter((record) => record.tags.includes("life-narrative"))
+        .slice(-NARRATIVE_CONTINUITY_WINDOW)
+        .map((record) => record.content);
+
+      const result = await runLifeNarrative(llm, {
+        agentId: agent.agentId,
+        displayName: agent.displayName,
+        persona: agent.persona,
+        period,
+        locationId: routine.locationId,
+        intent: routine.intent,
+        now,
+        recentNarratives,
+      });
+      if ("write" in result) {
+        this.state.applyMemoryWrites(agent.agentId, [result.write]);
+        written += 1;
+      } else {
+        notes.push(`${agent.agentId}: ${result.error}`);
+      }
+    }
+    return written;
+  }
+
+  private async runDailyReflection(date: Date, notes: string[]): Promise<number> {
+    const llm = this.llm();
+    if (!llm) {
+      return 0;
+    }
+    const now = date.toISOString();
+    const localDay = now.slice(0, 10);
+    let written = 0;
+
+    for (const agent of this.state.config.agents) {
+      // Evidence: today's most important memories, excluding prior reflections.
+      const evidence = this.state
+        .memoriesFor(agent.agentId)
+        .filter((record) => record.kind !== "reflection")
+        .filter((record) => record.createdAt.slice(0, 10) === localDay)
+        .sort((a, b) => b.importance - a.importance)
+        .slice(0, REFLECTION_EVIDENCE_LIMIT);
+      if (evidence.length === 0) {
+        continue;
+      }
+
+      const planner = createLlmReflectionPlanner<RealmMemoryMetadataV1>(llm, {
+        personaName: agent.displayName,
+        persona: agent.persona,
+      });
+      const reflection = await runReflection(
+        {
+          agentId: agent.agentId,
+          trigger: {
+            kind: "scheduled",
+            reason: "nightly reflection over the day's memories",
+            now,
+            sourceIds: [agent.agentId],
+          },
+          evidence,
+        },
+        planner,
+      );
+
+      if (reflection.status === "completed" && reflection.memoryWrites.length > 0) {
+        // The generic planner leaves metadata empty; stamp the realm metadata
+        // so reflection memories join the engine-produced stream correctly.
+        const writes = reflection.memoryWrites.map((write) => ({
+          ...write,
+          metadata: {
+            ...(write.metadata as Record<string, unknown>),
+            source: "engine",
+          } as RealmMemoryMetadataV1,
+        }));
+        this.state.applyMemoryWrites(agent.agentId, writes);
+        written += writes.length;
+      } else if (reflection.status !== "completed") {
+        const detail = reflection.diagnostics.map((entry) => entry.message).join("; ");
+        notes.push(`${agent.agentId}: reflection ${reflection.status}: ${detail}`);
+      }
+    }
+    return written;
   }
 
   private runTick(period: RealmRoutinePeriodV1, date: Date): number {

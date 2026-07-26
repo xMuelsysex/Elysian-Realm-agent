@@ -47,8 +47,10 @@ export function buildAffectAnalysisMessages(input: AffectAnalysisInput): {
     system: [
       "You analyze how a roleplayed character's feelings shift after a conversation exchange.",
       "Respond with a single JSON object and nothing else, using this shape:",
-      `{"affinityDelta": number in [-${MAX_CONVERSATION_AFFINITY_DELTA}, ${MAX_CONVERSATION_AFFINITY_DELTA}], "mood": string, "moodIntensity": number in [0, 1], "reason": string}`,
+      `{"affinityDelta": number in [-${MAX_CONVERSATION_AFFINITY_DELTA}, ${MAX_CONVERSATION_AFFINITY_DELTA}], "mood": string, "moodIntensity": number in [0, 1], "memoryImportance": integer in [0, 9], "reason": string}`,
       "affinityDelta is the change in how the character feels about the participant caused by this exchange alone.",
+      "memoryImportance rates how much this exchange deserves to be remembered:",
+      "7-9 promises, plans, confessions, or major personal revelations; 5-6 emotionally significant moments or new facts about each other; 3-4 ordinary topical conversation; 1-2 small talk and greetings.",
     ].join("\n"),
     user: [
       `Character: ${input.agentDisplayName}; ${relationshipLine}; ${moodLine}.`,
@@ -106,6 +108,7 @@ export function parseAffectAnalysis(content: string): RealmConversationAffectV1 
   const notes: string[] = [];
   const affinityDelta = readAffinityDelta(parsed, notes);
   const mood = readMood(parsed, notes);
+  const memoryImportance = readMemoryImportance(parsed, notes);
 
   if (affinityDelta === undefined && mood === undefined) {
     return {
@@ -123,6 +126,7 @@ export function parseAffectAnalysis(content: string): RealmConversationAffectV1 
     reason: notes.length > 0 ? `${reason} (${notes.join("; ")})` : reason,
     ...(affinityDelta !== undefined ? { affinityDelta } : {}),
     ...(mood !== undefined ? { mood } : {}),
+    ...(memoryImportance !== undefined ? { memoryImportance } : {}),
   };
 }
 
@@ -165,6 +169,20 @@ function readMood(
   }
 
   return { mood: rawMood, intensity };
+}
+
+function readMemoryImportance(parsed: Record<string, unknown>, notes: string[]): number | undefined {
+  const raw = parsed.memoryImportance;
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) {
+    notes.push("ignored non-numeric memoryImportance");
+    return undefined;
+  }
+  const clamped = Math.min(9, Math.max(0, Math.round(raw)));
+  if (clamped !== raw) {
+    notes.push(`memoryImportance normalized from ${raw} to ${clamped}`);
+  }
+  return clamped;
 }
 
 function stripCodeFence(content: string): string {

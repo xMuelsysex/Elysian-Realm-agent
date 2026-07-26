@@ -1,5 +1,11 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-07-27 鲜活度第一批：生活叙事+时间感+记忆分级+LLM 反思
+
+- 改动：①tick 后 LLM 写第一人称日记时刻（`host/lifeNarrative.ts`，失败进 notes 不阻塞）②prompt 注入当前时间/距上次交谈/记忆相对时间（`turn.at?` 合约演进）③情感分析增 memoryImportance 打分（约定 7-9、寒暄 1-2，缺省回退 3）④`reflection/llmReflectionPlanner.ts` 夜间每日反思（内心独白、evidence 过滤可见、复用 runReflection 验证链）。hub 暴露 getLlm()，tick async 化返回 RealmTickReport。
+- 学到：调研先行有效——AstrBot 生态无"bot 过日子"插件（双轨独有优势自研）；scriptor（AGPL 仅借理念）的 sleep-consolidation 任务分解和记忆压缩分级直接成为反思与打分的 prompt 蓝本。
+- 坑：LLM planner 泛型 metadata 为空对象，host 侧写入前须 stamp realm metadata（source: engine）；demo 中转按 system prompt 特征分流四种角色（对话/分析 JSON/叙事/反思数组）可离线验证全链路。
+
 ## 2026-07-27 realm host：宿主进程让 agent"活"了
 
 - 改动：`npm run host` 单进程 = /chat 聊天页（好感/心情实时徽标）+ /admin 配置 + 状态持久化（./realm-data 全量快照原子写：realm.json 角色配置可手编、memories/affect/conversations/tick）+ tick 调度（本地时钟 period 切换才跑 step）。对话建议（memoryWrites/affinityDelta/mood）由 host 自动应用——闭环从组合测试变成常驻现实。关键文件：`src/host/`（realmState/realmHost/hostApi/chatPage/main）。

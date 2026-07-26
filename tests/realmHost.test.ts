@@ -141,24 +141,25 @@ test("periodOf maps the real clock onto realm periods", () => {
   assert.equal(periodOf(3), "night");
 });
 
-test("ticks run on period changes and accumulate routine memories", () => {
+test("ticks run on period changes and accumulate routine memories", async () => {
   const dir = tempDataDir();
   const state = new RealmStateStore(dir);
   // Local-time constructor: periodOf follows the host's wall clock.
   let clock = new Date(2026, 6, 26, 9, 0, 0);
   const host = new RealmHost(state, () => undefined, { now: () => clock });
 
-  const first = host.tickIfPeriodChanged();
+  const first = await host.tickIfPeriodChanged();
   assert.ok(first, "first check runs a tick");
   assert.equal(first.period, "morning");
   assert.ok(first.added > 0, "tick produces routine memories");
+  assert.equal(first.narratives, 0, "no llm means no narratives");
 
-  const skipped = host.tickIfPeriodChanged();
+  const skipped = await host.tickIfPeriodChanged();
   assert.equal(skipped, undefined, "same period does not tick again");
 
   const before = state.memoriesFor(AGENT_ID).length;
   clock = new Date(2026, 6, 26, 13, 0, 0);
-  const second = host.tickIfPeriodChanged();
+  const second = await host.tickIfPeriodChanged();
   assert.ok(second && second.added > 0, "period change ticks again");
   assert.equal(second.period, "day");
   assert.ok(state.memoriesFor(AGENT_ID).length > before);
@@ -170,7 +171,7 @@ test("ticks run on period changes and accumulate routine memories", () => {
   // Restart safety: a fresh host over the same data dir must not double-tick
   // the same (date, period) — the tick state is persisted.
   const restartedHost = new RealmHost(restored, () => undefined, { now: () => clock });
-  assert.equal(restartedHost.tickIfPeriodChanged(), undefined);
+  assert.equal(await restartedHost.tickIfPeriodChanged(), undefined);
 });
 
 test("host api serves state, history, and chat with explicit errors", async () => {

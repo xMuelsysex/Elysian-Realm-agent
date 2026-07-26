@@ -24,7 +24,7 @@ try {
   const hub = createConversationHub();
   const dataDir = process.env.ELYSIAN_REALM_DATA ?? "./realm-data";
   const state = new RealmStateStore(dataDir);
-  const host = new RealmHost(state, () => hub.getRunner());
+  const host = new RealmHost(state, () => hub.getRunner(), { llm: () => hub.getLlm() });
 
   const adminToken = process.env.ELYSIAN_ADMIN_TOKEN;
   const extensionsAllowed = LOOPBACK_HOSTS.has(config.host) || adminToken !== undefined;
@@ -49,30 +49,36 @@ try {
       : {}),
   });
 
-  let firstTick: ReturnType<RealmHost["tickIfPeriodChanged"]>;
+  const logTick = (tick: Awaited<ReturnType<RealmHost["tickIfPeriodChanged"]>>): void => {
+    if (!tick) {
+      return;
+    }
+    console.log(
+      `tick: period=${tick.period}, ${tick.added} memories, ${tick.narratives} narrative(s), ${tick.reflections} reflection(s)`,
+    );
+    for (const note of tick.notes) {
+      console.warn(`tick note: ${note}`);
+    }
+  };
+
+  let firstTick: Awaited<ReturnType<RealmHost["tickIfPeriodChanged"]>>;
   try {
-    firstTick = host.tickIfPeriodChanged();
+    firstTick = await host.tickIfPeriodChanged();
   } catch (error) {
     // A failed tick must not take the chat/admin surfaces down.
     console.error("startup tick failed", error);
   }
   const tickTimer = setInterval(() => {
-    try {
-      const tick = host.tickIfPeriodChanged();
-      if (tick) {
-        console.log(`tick: period=${tick.period}, ${tick.added} new memories`);
-      }
-    } catch (error) {
-      console.error("tick failed", error);
-    }
+    void host
+      .tickIfPeriodChanged()
+      .then(logTick)
+      .catch((error) => console.error("tick failed", error));
   }, TICK_CHECK_INTERVAL_MS);
 
   const base = `http://${config.host}:${running.address.port}`;
   console.log(`elysian-realm host listening on ${base}`);
   console.log(`realm data: ${dataDir} (${state.config.agents.length} agent(s))`);
-  if (firstTick) {
-    console.log(`tick: period=${firstTick.period}, ${firstTick.added} new memories`);
-  }
+  logTick(firstTick);
   const status = hub.getStatus();
   console.log(
     status.configured
