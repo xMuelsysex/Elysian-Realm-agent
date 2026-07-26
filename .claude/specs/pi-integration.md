@@ -29,3 +29,12 @@
 
 - 情感分析 JSON 解析失败 → `analysis: "failed"` + reason 可见，回复仍可用；回复失败则整个请求失败。
 - 数值 clamp 且可观察：affinityDelta ±10、moodIntensity [0,1]，clamp 记入 reason。
+
+## 中转接入（custom relay）
+
+- 请求路径拼接：pi-ai 底层用 openai/anthropic 官方 SDK——OpenAI 兼容实际打 `{baseUrl}/chat/completions`（baseUrl 通常须以 `/v1` 结尾），Anthropic 兼容打 `{baseUrl}/v1/messages`。
+- **WAF 拦 SDK 指纹**：国内中转网关常在认证前按 openai SDK 指纹（`OpenAI/JS` UA + `x-stainless-*` 头）回 403 "blocked"。中转模式已默认注入 `RELAY_HEADER_OVERRIDES`（中性 UA + 全套 `x-stainless-*: null`）；链路是 `StreamOptions.headers` → openai SDK `defaultHeaders`，null 值删除 SDK 自动头。目录模式不受影响。
+- **无 key 诊断法**（定位拦截层）：对同一端点用三组 UA 各发一次无凭据请求——返回 401 说明到了认证层（网关放行），403 "blocked" 说明认证前被 WAF 拦；对比 curl UA / 浏览器 UA / SDK 指纹头即可锁定拦截特征。
+- 测试连接失败时 admin API 返回 `target` 字段（实际请求 URL，永不含 key），路径错误一眼可见。
+- 中转合成 Model 的 contextWindow/maxTokens 是固定默认（128k/8k），仅影响 pi 内部预算估计。
+- 端到端验证手法：本地 20 行假中转（SSE chunk 格式，可加 WAF 规则模拟）即可无 key 验证整条管线。

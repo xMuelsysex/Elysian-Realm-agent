@@ -48,8 +48,17 @@ The tests are offline and deterministic, including the conversation track (fake 
 
 ```bash
 npm run build
-npm start
+npm start        # stateless service: step + conversation + admin endpoints
+npm run host     # stateful realm host: chat UI + persistence + tick scheduler
 ```
+
+### Realm host (`npm run host`)
+
+The host is the authoritative process that makes agents "live": it owns and persists world state under `./realm-data/` (`ELYSIAN_REALM_DATA` to override) — persona config (`realm.json`, hand-editable, seeded with a default persona on first run), memory streams, affect snapshots, conversation histories, and tick state. It applies conversation proposals (memory writes, affinity deltas, moods) automatically, and runs a deterministic routine tick whenever the local wall-clock period changes (morning 6–11, day 11–17, evening 17–22, night otherwise), so agents accumulate a daily life between conversations.
+
+- `GET /chat` — chat UI with a live affinity/mood badge
+- `GET /admin` — LLM configuration (same as the service)
+- `GET /v1/host/state`, `GET /v1/host/history/{agentId}`, `POST /v1/host/chat`
 
 Configuration:
 

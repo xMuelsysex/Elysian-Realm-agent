@@ -1,5 +1,16 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-07-27 realm host：宿主进程让 agent"活"了
+
+- 改动：`npm run host` 单进程 = /chat 聊天页（好感/心情实时徽标）+ /admin 配置 + 状态持久化（./realm-data 全量快照原子写：realm.json 角色配置可手编、memories/affect/conversations/tick）+ tick 调度（本地时钟 period 切换才跑 step）。对话建议（memoryWrites/affinityDelta/mood）由 host 自动应用——闭环从组合测试变成常驻现实。关键文件：`src/host/`（realmState/realmHost/hostApi/chatPage/main）。
+- 学到：agentService 的 admin 路由泛化成扩展点（AdminOptions 同构复用给 chat）；host 层生成时间合规（host 就是宿主）；扩展 handler 拿不到 query string，路径参数用 `/v1/host/history/{agentId}` 段式。
+- 坑：①tick stepId 按小时生成 → 同小时重启撞 plan 记忆 id 崩启动，改毫秒时间戳；②lastTickPeriod 内存态重启即丢 → tick 状态落盘（date+period 判重）；③periodOf 用本地时钟，测试必须用本地时间构造 Date（UTC 构造踩过一次）；④startup tick 必须 try/catch，否则拖垮 chat/admin 面。
+
+## 2026-07-26 里程碑：真实 LLM 端到端首通
+
+- 主人的中转（OpenAI 兼容 + gpt-5.6-sol）经指纹修复后连通；首条真实对话验证全管线：人设/记忆/好感注入 → 回复自然引用注入记忆并反映好感语气 → 情感分析返回完整 JSON（delta +3、mood 欣喜而亲昵 0.82、含理由）→ 两条对话记忆建议正确生成。
+- "情感载体"闭环自此可投入实际使用；后续接宿主应用层即可。
+
 ## 2026-07-26 中转 403 排查与 SDK 指纹修复
 
 - 现象：中转站测试连接 403 "Your request was blocked."（baseUrl 已带 /v1，路径正确）。

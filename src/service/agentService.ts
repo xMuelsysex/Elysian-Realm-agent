@@ -39,12 +39,12 @@ export type AdminRequestHandler = (
 
 export interface AdminOptions {
   handler: AdminRequestHandler;
-  /** HTML served at GET /admin. */
+  /** HTML served at the extension's page path. */
   page?: string;
   /**
-   * Bearer token required for every admin route. The assembly point decides:
-   * loopback binds may omit it; non-loopback binds must set one (main.ts
-   * refuses to enable admin without it).
+   * Bearer token required for every route of this extension. The assembly
+   * point decides: loopback binds may omit it; non-loopback binds must set
+   * one (main.ts refuses to enable the extension without it).
    */
   token?: string;
 }
@@ -54,10 +54,14 @@ export interface AdminOptions {
  * and is only enabled when a runner (or runner source) is provided; without
  * one the endpoint reports 501 explicitly rather than pretending to work.
  * Passing a function makes the capability dynamic (admin hot-reconfiguration).
+ *
+ * `admin` serves GET /admin + /v1/admin/*; `chat` serves GET /chat +
+ * /v1/host/* — both use the same page + data-handler + token shape.
  */
 export interface AgentServiceOptions {
   conversationRunner?: ConversationRunner | (() => ConversationRunner | undefined);
   admin?: AdminOptions;
+  chat?: AdminOptions;
 }
 
 export interface RunningAgentService {
@@ -191,7 +195,12 @@ async function handleRequest(
   }
 
   if (path === "/admin" || path.startsWith("/v1/admin/")) {
-    await handleAdminRequest(request, response, method, path, options.admin);
+    await handleExtensionRequest(request, response, method, path, options.admin, "/admin", "admin");
+    return;
+  }
+
+  if (path === "/chat" || path.startsWith("/v1/host/")) {
+    await handleExtensionRequest(request, response, method, path, options.chat, "/chat", "chat");
     return;
   }
 
@@ -265,34 +274,36 @@ async function handleRequest(
   writeJson(response, 404, { error: { code: "NOT_FOUND", message: "route not found" } }, method === "HEAD");
 }
 
-async function handleAdminRequest(
+async function handleExtensionRequest(
   request: IncomingMessage,
   response: ServerResponse,
   method: string,
   path: string,
-  admin: AdminOptions | undefined,
+  extension: AdminOptions | undefined,
+  pagePath: string,
+  name: string,
 ): Promise<void> {
-  if (!admin) {
-    writeJson(response, 404, { error: { code: "ADMIN_NOT_ENABLED", message: "admin interface is not enabled on this service instance" } }, method === "HEAD");
+  if (!extension) {
+    writeJson(response, 404, { error: { code: `${name.toUpperCase()}_NOT_ENABLED`, message: `${name} interface is not enabled on this service instance` } }, method === "HEAD");
     return;
   }
 
-  if (admin.token !== undefined && !hasValidAdminToken(request, admin.token)) {
-    writeJson(response, 403, { error: { code: "ADMIN_FORBIDDEN", message: "missing or invalid admin token" } }, false);
+  if (extension.token !== undefined && !hasValidAdminToken(request, extension.token)) {
+    writeJson(response, 403, { error: { code: `${name.toUpperCase()}_FORBIDDEN`, message: `missing or invalid ${name} token` } }, false);
     return;
   }
 
-  if (path === "/admin") {
+  if (path === pagePath) {
     if (method !== "GET" && method !== "HEAD") {
       response.setHeader("allow", "GET, HEAD");
       writeJson(response, 405, { error: { code: "METHOD_NOT_ALLOWED", message: "route requires GET" } }, false);
       return;
     }
-    if (admin.page === undefined) {
-      writeJson(response, 404, { error: { code: "ADMIN_PAGE_NOT_CONFIGURED", message: "no admin page configured" } }, method === "HEAD");
+    if (extension.page === undefined) {
+      writeJson(response, 404, { error: { code: `${name.toUpperCase()}_PAGE_NOT_CONFIGURED`, message: `no ${name} page configured` } }, method === "HEAD");
       return;
     }
-    const payload = admin.page;
+    const payload = extension.page;
     response.statusCode = 200;
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.setHeader("cache-control", "no-store");
@@ -305,7 +316,7 @@ async function handleAdminRequest(
   if (method === "POST" || method === "PUT") {
     const parsed = await readJsonBody(request);
     if (!parsed.ok) {
-      // Allow empty bodies for admin POSTs (e.g. test with current config).
+      // Allow empty bodies for extension POSTs (e.g. test with current config).
       if (parsed.code === "INVALID_JSON" && parsed.message.includes("must contain JSON")) {
         body = undefined;
       } else {
@@ -317,9 +328,9 @@ async function handleAdminRequest(
     }
   }
 
-  const result = await admin.handler(method, path, body);
+  const result = await extension.handler(method, path, body);
   if (result === undefined) {
-    writeJson(response, 404, { error: { code: "NOT_FOUND", message: "admin route not found" } }, false);
+    writeJson(response, 404, { error: { code: "NOT_FOUND", message: `${name} route not found` } }, false);
     return;
   }
   writeJson(response, result.status, result.body, false);
