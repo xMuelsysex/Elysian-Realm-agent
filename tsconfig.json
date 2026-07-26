@@ -14,6 +14,9 @@
       ],
       "@elysian/simulation-agent/service": [
         "src/service/index.ts"
+      ],
+      "@elysian/simulation-agent/llm/pi-ai": [
+        "src/llm/piAiLlmPort.ts"
       ]
     },
     "types": [

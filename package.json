@@ -13,6 +13,10 @@
     "./service": {
       "types": "./dist/service/index.d.ts",
       "import": "./dist/service/index.js"
+    },
+    "./llm/pi-ai": {
+      "types": "./dist/llm/piAiLlmPort.d.ts",
+      "import": "./dist/llm/piAiLlmPort.js"
     }
   },
   "files": [
@@ -26,7 +30,10 @@
     "start": "node dist/service/main.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.82.1"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
