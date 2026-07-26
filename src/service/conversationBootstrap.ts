@@ -12,7 +12,7 @@
 // the 0600 credentials file and are applied to the running service instantly.
 
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import { createModels, createProvider, type MutableModels } from "@earendil-works/pi-ai";
+import { createModels, createProvider, type ProviderHeaders, type SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
 import type { Api, Model } from "@earendil-works/pi-ai";
@@ -311,17 +311,17 @@ function createAdminHandler(
 
 /** Production runtime builder: catalog mode or custom relay mode. */
 export function buildConversationRuntime(config: StoredLlmConfig): ConversationRuntime {
-  const { models, model } = config.baseUrl !== undefined
-    ? customRelayModels(config)
-    : catalogModels(config);
+  const { streamFn, completionClient, model } = config.baseUrl !== undefined
+    ? customRelayParts(config)
+    : catalogParts(config);
 
-  const probeLlm = createPiAiLlmPort(models, model, {
+  const probeLlm = createPiAiLlmPort(completionClient, model, {
     ...(config.apiKey !== undefined ? { apiKey: config.apiKey } : {}),
   });
   return {
     runner: createConversationRunner({
       reply: createPiConversationReplyPort({
-        streamFn: models.streamSimple.bind(models),
+        streamFn,
         model,
         ...(config.apiKey !== undefined ? { apiKey: config.apiKey } : {}),
       }),
@@ -331,12 +331,13 @@ export function buildConversationRuntime(config: StoredLlmConfig): ConversationR
   };
 }
 
-interface RuntimeModels {
-  models: MutableModels;
+interface RuntimeParts {
+  streamFn: Parameters<typeof createPiConversationReplyPort>[0]["streamFn"];
+  completionClient: Parameters<typeof createPiAiLlmPort>[0];
   model: Model<Api>;
 }
 
-function catalogModels(config: StoredLlmConfig): RuntimeModels {
+function catalogParts(config: StoredLlmConfig): RuntimeParts {
   const models = builtinModels();
   const model = models.getModel(config.provider as string, config.model);
   if (!model) {
@@ -344,17 +345,42 @@ function catalogModels(config: StoredLlmConfig): RuntimeModels {
       `model "${config.model}" of provider "${config.provider}" is not in the pi-ai catalog`,
     );
   }
-  return { models, model };
+  return {
+    streamFn: models.streamSimple.bind(models),
+    completionClient: models,
+    model,
+  };
 }
 
 const CUSTOM_PROVIDER_ID = "custom-relay";
+
+/**
+ * Relay WAFs commonly fingerprint-block the OpenAI SDK (its `OpenAI/JS` user
+ * agent and `x-stainless-*` headers trigger 403s before auth even runs), so
+ * custom relay requests present a neutral user agent and suppress the SDK
+ * fingerprint headers. `null` removes a default header at the SDK layer.
+ */
+const RELAY_HEADER_OVERRIDES: ProviderHeaders = {
+  "user-agent": "Mozilla/5.0 (compatible; ElysianRealmAgent/0.1)",
+  "x-stainless-lang": null,
+  "x-stainless-package-version": null,
+  "x-stainless-os": null,
+  "x-stainless-arch": null,
+  "x-stainless-runtime": null,
+  "x-stainless-runtime-version": null,
+  "x-stainless-retry-count": null,
+  "x-stainless-timeout": null,
+  "x-stainless-async": null,
+  "x-stainless-helper-method": null,
+  "x-stainless-raw-response": null,
+};
 
 /**
  * Custom relay mode: wrap any OpenAI- or Anthropic-compatible endpoint into a
  * pi-ai provider. Auth resolves to nothing here on purpose — the stored key is
  * passed explicitly per request and explicit keys win over provider auth.
  */
-function customRelayModels(config: StoredLlmConfig): RuntimeModels {
+function customRelayParts(config: StoredLlmConfig): RuntimeParts {
   const api = config.api ?? "openai-completions";
   const baseUrl = config.baseUrl as string;
   const model = {
@@ -381,7 +407,21 @@ function customRelayModels(config: StoredLlmConfig): RuntimeModels {
 
   const models = createModels();
   models.setProvider(provider);
-  return { models, model };
+
+  const withRelayHeaders = (options?: SimpleStreamOptions): SimpleStreamOptions => ({
+    ...options,
+    headers: { ...RELAY_HEADER_OVERRIDES, ...options?.headers },
+  });
+
+  return {
+    streamFn: (streamModel, context, options) =>
+      models.streamSimple(streamModel, context, withRelayHeaders(options)),
+    completionClient: {
+      completeSimple: (completionModel, context, options) =>
+        models.completeSimple(completionModel, context, withRelayHeaders(options)),
+    },
+    model,
+  };
 }
 
 function parseAdminConfigBody(

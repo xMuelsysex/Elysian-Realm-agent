@@ -1,5 +1,13 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-07-26 中转 403 排查与 SDK 指纹修复
+
+- 现象：中转站测试连接 403 "Your request was blocked."（baseUrl 已带 /v1，路径正确）。
+- 诊断方法（无 key 定位）：同一端点三组 UA 对比——curl UA→401、浏览器 UA→401、openai SDK 特征（`OpenAI/JS` UA + `x-stainless-*`）→403。结论：中转 WAF 在认证前按 SDK 指纹拦截。
+- 修复：中转模式请求默认注入 `RELAY_HEADER_OVERRIDES`（中性 UA + 全套 `x-stainless-*: null`）；pi-ai 链路 `StreamOptions.headers` → openai SDK `defaultHeaders`，null 值删除 SDK 自动头。注入点在 `customRelayParts` 包装的 streamFn/completionClient，目录模式不受影响。
+- 验证：假 WAF 中转（拦 stainless/OpenAI UA）端到端——修复后 `stainless=[]`、返回 pong。
+- 学到：403 文案"blocked"基本是网关层（401 才到认证层）；无 key 也能用 UA 对比法定位拦截层。
+
 ## 2026-07-26 admin 中转接入（baseURL + key）
 
 - 改动：配置双模式（`provider` 目录 / `baseUrl` 中转，二选一），校验统一收敛 `validateLlmConfig`；中转 runtime 走 `createProvider` + 合成 Model + lazy api（openai-completions / anthropic-messages）；页面默认「自定义中转」模式。关键文件：`llmConfigStore.ts`、`conversationBootstrap.ts`（customRelayModels）、`adminPage.ts`。
