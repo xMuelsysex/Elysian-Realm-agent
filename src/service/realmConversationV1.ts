@@ -5,8 +5,8 @@
 // PROPOSED affect changes and memory writes — the host stays authoritative
 // and decides whether to apply them, mirroring the realm-agent-step contract.
 
-import type { AgentMood, RelationshipAffect } from "../affect/affectRecords.js";
-import type { MemoryWrite } from "../memory/memoryRecords.js";
+import type { AffectState, AgentMood, RelationshipAffect } from "../affect/affectRecords.js";
+import type { EmotionSignature, MemoryWrite } from "../memory/memoryRecords.js";
 import type { RealmMemoryMetadataV1, RealmMemoryRecordV1 } from "./realmStepV1.js";
 
 export const REALM_CONVERSATION_SCHEMA_VERSION = "realm-conversation.v1" as const;
@@ -55,6 +55,8 @@ export interface RealmConversationRequestV1 {
   relationship?: RelationshipAffect;
   /** The agent's current mood, if established. */
   mood?: AgentMood;
+  /** The agent's current plot-driven emotional state, if established. */
+  affect?: AffectState;
   /** Prior turns of this conversation, oldest first. */
   history: readonly RealmConversationTurnV1[];
   /** The new incoming participant message to answer. */
@@ -80,6 +82,11 @@ export interface RealmConversationAffectV1 {
    * promises and major events high, small talk low.
    */
   memoryImportance?: number;
+  /**
+   * The emotional signature this exchange leaves on the character: how the
+   * agent felt at this moment. Stamped onto conversation memories when present.
+   */
+  emotion?: EmotionSignature;
 }
 
 export interface RealmConversationResponseV1 {

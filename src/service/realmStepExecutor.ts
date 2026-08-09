@@ -8,9 +8,17 @@ import {
   type ReflectionDiagnostic,
   type ReflectionPlanner,
 } from "../index.js";
+import { AffectValidationError, validateAffectState, validatePlotEvent } from "../affect/affectValidation.js";
+import type { AffectState, PlotEvent } from "../affect/affectRecords.js";
+import {
+  applyPlotEvents,
+  computeAffinityDelta,
+  createInitialAffectState,
+} from "../affect/plotRules.js";
 import {
   REALM_AGENT_STEP_SCHEMA_VERSION,
   type RealmActiveRoutineV1,
+  type RealmAffectProposalV1,
   type RealmAgentPerceptionV1,
   type RealmAgentStepInputV1,
   type RealmAgentStepOutputV1,
@@ -76,12 +84,14 @@ function executeAgent(
 ): RealmAgentStepOutputV1 {
   const perception = input.perception;
   const memoryStore = new InMemoryMemoryStore<RealmMemoryMetadataV1>(input.memories);
+  const affectProposal = buildAffectProposal(input, request.now);
   if (input.skipCognitiveTick) {
     return {
       agentId: perception.agentId,
       phases: [],
       memories: memoryStore.list(perception.agentId),
       reflection: runReflectionPolicy(perception, request, memoryStore),
+      ...(affectProposal ? { affectProposal } : {}),
     };
   }
 
@@ -138,6 +148,28 @@ function executeAgent(
       : {}),
     memories: memoryStore.list(perception.agentId),
     reflection,
+    ...(affectProposal ? { affectProposal } : {}),
+  };
+}
+
+/**
+ * Deterministic affect proposal: decay the carried state toward its baseline,
+ * apply the plot events, and propose the resulting affinity shift. Present
+ * only when the step carried affect state or plot events.
+ */
+function buildAffectProposal(
+  input: RealmAgentStepInputV1,
+  now: string,
+): RealmAffectProposalV1 | undefined {
+  const events = input.plotEvents ?? [];
+  if (input.affectState === undefined && events.length === 0) {
+    return undefined;
+  }
+  const current =
+    input.affectState ?? createInitialAffectState(input.perception.agentId, now);
+  return {
+    affect: applyPlotEvents(current, events, now),
+    affinityDelta: computeAffinityDelta(events),
   };
 }
 
@@ -393,11 +425,53 @@ function validateAgentInput(input: unknown, index: number): RealmAgentStepInputV
     throw new RealmAgentStepValidationError(`${path}.skipCognitiveTick must be a boolean`);
   }
 
+  const affectState = validateAffectStateInput(input.affectState, `${path}.affectState`);
+  const plotEvents = validatePlotEventsInput(input.plotEvents, `${path}.plotEvents`);
+
   return {
     perception,
     memories: input.memories as unknown as readonly RealmMemoryRecordV1[],
     ...(input.skipCognitiveTick === true ? { skipCognitiveTick: true } : {}),
+    ...(affectState !== undefined ? { affectState } : {}),
+    ...(plotEvents !== undefined ? { plotEvents } : {}),
   };
+}
+
+function validateAffectStateInput(input: unknown, path: string): AffectState | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  try {
+    validateAffectState(input as AffectState);
+  } catch (error) {
+    throw toValidationError(error, path);
+  }
+  return input as AffectState;
+}
+
+function validatePlotEventsInput(input: unknown, path: string): readonly PlotEvent[] | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(input)) {
+    throw new RealmAgentStepValidationError(`${path} must be an array`);
+  }
+  const events = input.map((candidate, eventIndex) => {
+    try {
+      validatePlotEvent(candidate as PlotEvent);
+    } catch (error) {
+      throw toValidationError(error, `${path}[${eventIndex}]`);
+    }
+    return candidate as PlotEvent;
+  });
+  return events;
+}
+
+function toValidationError(error: unknown, path: string): RealmAgentStepValidationError {
+  if (error instanceof AffectValidationError) {
+    return new RealmAgentStepValidationError(`${path} is invalid: ${error.message}`);
+  }
+  throw error;
 }
 
 function validatePerception(input: unknown, path: string): RealmAgentPerceptionV1 {

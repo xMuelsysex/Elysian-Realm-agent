@@ -8,6 +8,7 @@ export * from "./memory/inMemoryMemoryStore.js";
 export * from "./affect/affectRecords.js";
 export * from "./affect/affectValidation.js";
 export * from "./affect/inMemoryAffectStore.js";
+export * from "./affect/plotRules.js";
 export * from "./conversation/conversationPrompt.js";
 export * from "./conversation/affectAnalysis.js";
 export * from "./conversation/conversationRunner.js";

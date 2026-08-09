@@ -36,6 +36,7 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
       relatedMemoryIds: [...normalized.relatedMemoryIds],
       visibility: normalized.visibility,
       tags: [...normalized.tags],
+      ...(normalized.emotion !== undefined ? { emotion: { ...normalized.emotion } } : {}),
       metadata: normalized.metadata,
     };
 
@@ -118,6 +119,7 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
       relatedMemoryIds: record.relatedMemoryIds,
       visibility: record.visibility,
       tags: record.tags,
+      ...(record.emotion !== undefined ? { emotion: record.emotion } : {}),
       metadata: record.metadata,
     });
     if (typeof record.lastAccessedAt !== "string" || Number.isNaN(Date.parse(record.lastAccessedAt))) {
@@ -137,6 +139,7 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
       relatedMemoryIds: [...normalized.relatedMemoryIds],
       visibility: normalized.visibility,
       tags: [...normalized.tags],
+      ...(normalized.emotion !== undefined ? { emotion: { ...normalized.emotion } } : {}),
       metadata: normalized.metadata,
     });
   }

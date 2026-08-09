@@ -78,6 +78,40 @@ test("token-protected admin rejects missing or wrong tokens and accepts the righ
   }
 });
 
+test("stream results are written as text/event-stream frames", async (context) => {
+  const running = await startAgentService(
+    { host: "127.0.0.1", port: 0 },
+    {
+      chat: {
+        handler: async () => ({
+          status: 200,
+          stream: async (emit) => {
+            emit("delta", { text: "你" });
+            emit("delta", { text: "好" });
+            emit("done", { reply: "你好", affinity: 3 });
+          },
+        }),
+      },
+    },
+  );
+  context.after(async () => {
+    await stopAgentService(running.server);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${running.address.port}/v1/host/chat`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ agentId: "a", content: "hi" }),
+  });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") ?? "", /text\/event-stream/);
+  const text = await response.text();
+  assert.match(text, /event: delta/);
+  assert.match(text, /data: \{"text":"你"\}/);
+  assert.match(text, /event: done/);
+  assert.match(text, /data: \{"reply":"你好","affinity":3\}/);
+});
+
 test("admin routes unknown to the handler return 404", async () => {
   const silentHandler: AdminRequestHandler = () => Promise.resolve(undefined);
   const running = await startAgentService(

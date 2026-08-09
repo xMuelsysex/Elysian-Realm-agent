@@ -5,10 +5,11 @@
 
 import {
   AffectValidationError,
+  validateAffectState,
   validateImportedMood,
   validateImportedRelationship,
 } from "../affect/affectValidation.js";
-import type { AgentMood, RelationshipAffect } from "../affect/affectRecords.js";
+import type { AffectState, AgentMood, RelationshipAffect } from "../affect/affectRecords.js";
 import type {
   ConversationRunner,
 } from "../conversation/conversationRunner.js";
@@ -62,6 +63,7 @@ export function validateRealmConversationRequestV1(input: unknown): RealmConvers
   const memories = validateMemories(input.memories, agent.agentId);
   const relationship = validateRelationship(input.relationship, agent, participant);
   const mood = validateMood(input.mood, agent);
+  const affect = validateAffect(input.affect, agent);
   const history = validateHistory(input.history);
   const message = validateMessage(input.message);
   const options = validateOptions(input.options);
@@ -75,6 +77,7 @@ export function validateRealmConversationRequestV1(input: unknown): RealmConvers
     memories,
     ...(relationship ? { relationship } : {}),
     ...(mood ? { mood } : {}),
+    ...(affect ? { affect } : {}),
     history,
     message,
     ...(options ? { options } : {}),
@@ -151,6 +154,22 @@ function validateMood(input: unknown, agent: RealmConversationAgentV1): AgentMoo
     throw new RealmConversationValidationError("mood.agentId must equal agent.agentId");
   }
   return mood;
+}
+
+function validateAffect(input: unknown, agent: RealmConversationAgentV1): AffectState | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  const affect = input as AffectState;
+  try {
+    validateAffectState(affect);
+  } catch (error) {
+    throw toValidationError(error, "affect");
+  }
+  if (affect.agentId !== agent.agentId) {
+    throw new RealmConversationValidationError("affect.agentId must equal agent.agentId");
+  }
+  return affect;
 }
 
 function validateHistory(input: unknown): readonly RealmConversationTurnV1[] {

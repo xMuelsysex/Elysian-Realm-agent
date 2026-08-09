@@ -8,6 +8,9 @@
 // unusable response fails visibly through an empty-insights planner result.
 
 import type { LlmPort, LlmRequestOptionsLike } from "../ports/ports.js";
+import { parseLlmJson, truncate } from "../llm/llmJson.js";
+import { describeEmotion } from "../conversation/conversationPrompt.js";
+import type { MemoryRecord } from "../memory/memoryRecords.js";
 import type {
   ReflectionInput,
   ReflectionInsightOutput,
@@ -74,6 +77,7 @@ export function buildReflectionMessages<EvidenceMetadata>(
   const evidenceLines = input.evidence.map(
     (record) => `- id=${record.id} [${record.kind}] (importance ${record.importance}) ${record.content}`,
   );
+  const arcLine = describeEvidenceEmotionalArc(input.evidence);
 
   return {
     system: [
@@ -87,8 +91,29 @@ export function buildReflectionMessages<EvidenceMetadata>(
       '[{"content": "first-person insight in the persona\'s own language", "evidenceIds": ["memory ids that support it"], "importance": integer 0-9}]',
       "Each insight must cite at least one evidence id from the list. Higher importance (6-8) for insights about relationships and feelings; medium (4-5) for habits and observations.",
     ].join("\n"),
-    user: ["Evidence memories:", ...evidenceLines].join("\n"),
+    user: ["Evidence memories:", ...evidenceLines, ...(arcLine !== undefined ? [arcLine] : [])].join("\n"),
   };
+}
+
+/**
+ * Grounds the reflection in the emotional trajectory of the evidence period:
+ * the first and last emotionally signed moments, so insights can reference
+ * how feelings moved ("started warm, ended drained"). Absent when fewer than
+ * two signed memories exist.
+ */
+export function describeEvidenceEmotionalArc<EvidenceMetadata>(
+  evidence: readonly MemoryRecord<EvidenceMetadata>[],
+): string | undefined {
+  const signed = evidence
+    .filter((record) => record.emotion !== undefined)
+    .map((record) => ({ record, emotion: record.emotion! }))
+    .sort((a, b) => a.record.createdAt.localeCompare(b.record.createdAt));
+  if (signed.length < 2) {
+    return undefined;
+  }
+  const first = describeEmotion(signed[0].emotion);
+  const last = describeEmotion(signed[signed.length - 1].emotion);
+  return `Emotional arc across the evidence (${signed.length} emotionally signed moments): started ${first}, ended ${last}.`;
 }
 
 export function parseReflectionInsights<EvidenceMetadata, ReflectionMetadata = Record<string, unknown>>(
@@ -96,16 +121,15 @@ export function parseReflectionInsights<EvidenceMetadata, ReflectionMetadata = R
   input: ReflectionInput<EvidenceMetadata>,
   maxInsights: number,
 ): ReflectionPlannerOutput<ReflectionMetadata> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stripCodeFence(content));
-  } catch {
+  const parsedResult = parseLlmJson(content);
+  if (!parsedResult.ok) {
     return {
       source: "llm",
       insights: [],
       reason: `reflection returned non-JSON content: ${truncate(content, 120)}`,
     };
   }
+  const parsed = parsedResult.value;
   if (!Array.isArray(parsed)) {
     return { source: "llm", insights: [], reason: "reflection JSON must be an array" };
   }
@@ -153,16 +177,6 @@ export function parseReflectionInsights<EvidenceMetadata, ReflectionMetadata = R
         ? `llm reflection produced ${insights.length} insight(s)${notes.length > 0 ? ` (${notes.join("; ")})` : ""}`
         : `llm reflection produced no usable insights${notes.length > 0 ? ` (${notes.join("; ")})` : ""}`,
   };
-}
-
-function stripCodeFence(content: string): string {
-  const trimmed = content.trim();
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/.exec(trimmed);
-  return fenced ? fenced[1] : trimmed;
-}
-
-function truncate(value: string, maxLength: number): string {
-  return value.length <= maxLength ? value : `${value.slice(0, maxLength)}…`;
 }
 
 function errorMessage(error: unknown): string {

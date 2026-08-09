@@ -34,41 +34,68 @@ export function createPiConversationReplyPort(
 ): ConversationReplyPort {
   return {
     async generateReply(input: ConversationReplyInput): Promise<{ content: string }> {
-      const agent = new Agent({
-        initialState: {
-          systemPrompt: input.systemPrompt,
-          model: deps.model,
-          messages: input.history.map((turn) => toAgentMessage(turn, deps.model)),
-        },
-        streamFn: deps.streamFn,
-        sessionId: input.conversationId,
-        ...(deps.apiKey !== undefined ? { getApiKey: () => deps.apiKey } : {}),
-      });
-
+      const { agent } = buildAgent(input, deps);
       await agent.prompt(input.message);
-
-      const reply = [...agent.state.messages]
-        .reverse()
-        .find((message) => message.role === "assistant");
-      if (!reply || reply.role !== "assistant") {
-        throw new Error("pi agent completed without producing an assistant reply");
-      }
-      if (reply.stopReason === "error" || reply.stopReason === "aborted") {
-        const detail = reply.errorMessage ?? "no error message provided";
-        throw new Error(`pi agent reply ${reply.stopReason}: ${detail}`);
-      }
-
-      const content = reply.content
-        .filter((block): block is { type: "text"; text: string } => block.type === "text")
-        .map((block) => block.text)
-        .join("");
-      if (content.trim().length === 0) {
-        throw new Error("pi agent reply contained no text content");
-      }
-
-      return { content };
+      return { content: finalReplyText(agent) };
+    },
+    async generateReplyStream(
+      input: ConversationReplyInput,
+      onDelta: (text: string) => void,
+    ): Promise<{ content: string }> {
+      const { agent } = buildAgent(input, deps);
+      agent.subscribe((event) => {
+        if (event.type !== "message_update") {
+          return;
+        }
+        const assistantEvent = event.assistantMessageEvent;
+        if (assistantEvent.type === "text_delta") {
+          onDelta(assistantEvent.delta);
+        }
+      });
+      await agent.prompt(input.message);
+      return { content: finalReplyText(agent) };
     },
   };
+}
+
+function buildAgent(
+  input: ConversationReplyInput,
+  deps: PiConversationReplyPortDeps,
+): { agent: Agent } {
+  const agent = new Agent({
+    initialState: {
+      systemPrompt: input.systemPrompt,
+      model: deps.model,
+      messages: input.history.map((turn) => toAgentMessage(turn, deps.model)),
+    },
+    streamFn: deps.streamFn,
+    sessionId: input.conversationId,
+    ...(deps.apiKey !== undefined ? { getApiKey: () => deps.apiKey } : {}),
+  });
+  return { agent };
+}
+
+function finalReplyText(agent: Agent): string {
+  const reply = [...agent.state.messages]
+    .reverse()
+    .find((message) => message.role === "assistant");
+  if (!reply || reply.role !== "assistant") {
+    throw new Error("pi agent completed without producing an assistant reply");
+  }
+  if (reply.stopReason === "error" || reply.stopReason === "aborted") {
+    const detail = reply.errorMessage ?? "no error message provided";
+    throw new Error(`pi agent reply ${reply.stopReason}: ${detail}`);
+  }
+
+  const content = reply.content
+    .filter((block): block is { type: "text"; text: string } => block.type === "text")
+    .map((block) => block.text)
+    .join("");
+  if (content.trim().length === 0) {
+    throw new Error("pi agent reply contained no text content");
+  }
+
+  return content;
 }
 
 function toAgentMessage(turn: RealmConversationTurnV1, model: Model<Api>): AgentMessage {

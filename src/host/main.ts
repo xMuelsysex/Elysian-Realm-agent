@@ -95,7 +95,6 @@ try {
     clearInterval(tickTimer);
 
     try {
-      state.persist();
       await stopAgentService(running.server);
       console.log(`elysian-realm host stopped after ${signal}`);
     } catch (error) {

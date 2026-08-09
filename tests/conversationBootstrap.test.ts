@@ -175,9 +175,74 @@ test("admin save rejects unknown models without persisting or swapping", async (
     model: "unknown-model",
   });
   assert.equal(result?.status, 400);
-  assert.match(String((result?.body as { error: { message: string } }).error.message), /not in the pi-ai catalog/);
+  assert.match(
+    String(
+      result !== undefined && "body" in result
+        ? (result.body as { error: { message: string } }).error.message
+        : "",
+    ),
+    /not in the pi-ai catalog/,
+  );
   assert.equal(hub.getRunner(), undefined);
   assert.equal(loadLlmConfig(path), undefined, "rejected config must not be persisted");
+});
+
+test("admin save without a key keeps the stored key instead of dropping it", async () => {
+  const factory = fakeRuntimeFactory();
+  const path = tempConfigPath();
+  const hub = createConversationHub({}, {
+    credentialsPath: path,
+    buildRuntime: factory.buildRuntime,
+  });
+  const handler = hub.createAdminHandler();
+
+  const first = await handler("POST", "/v1/admin/llm-config", {
+    provider: "anthropic",
+    model: "good-model",
+    apiKey: "sk-stored",
+  });
+  assert.equal(first?.status, 200);
+
+  // The page never echoes the stored key: a save without apiKey must keep it.
+  const second = await handler("POST", "/v1/admin/llm-config", {
+    provider: "anthropic",
+    model: "good-model",
+  });
+  assert.equal(second?.status, 200);
+  assert.deepEqual(loadLlmConfig(path), {
+    provider: "anthropic",
+    model: "good-model",
+    apiKey: "sk-stored",
+  });
+});
+
+test("admin test probes with the stored key when the candidate omits it", async () => {
+  const factory = fakeRuntimeFactory();
+  const hub = createConversationHub({}, {
+    credentialsPath: tempConfigPath(),
+    buildRuntime: factory.buildRuntime,
+  });
+  const handler = hub.createAdminHandler();
+
+  await handler("POST", "/v1/admin/llm-config", {
+    provider: "anthropic",
+    model: "good-model",
+    apiKey: "sk-stored",
+  });
+  const builtBefore = factory.built.length;
+
+  const probed = await handler("POST", "/v1/admin/llm-config/test", {
+    provider: "anthropic",
+    model: "good-model",
+  });
+  assert.equal(probed?.status, 200);
+  assert.deepEqual(
+    probed !== undefined && "body" in probed ? probed.body : undefined,
+    { ok: true, model: "good-model", content: "pong" },
+  );
+  const lastBuilt = factory.built[factory.built.length - 1];
+  assert.equal(lastBuilt?.apiKey, "sk-stored", "probe runtime must carry the stored key");
+  assert.ok(factory.built.length > builtBefore);
 });
 
 test("admin test endpoint probes the current or a candidate config", async () => {
@@ -197,7 +262,7 @@ test("admin test endpoint probes the current or a candidate config", async () =>
     apiKey: "sk-probe",
   });
   assert.equal(candidateOk?.status, 200);
-  assert.deepEqual(candidateOk?.body, { ok: true, model: "good-model", content: "pong" });
+  assert.deepEqual(candidateOk !== undefined && "body" in candidateOk ? candidateOk.body : undefined, { ok: true, model: "good-model", content: "pong" });
 
   const candidateBad = await handler("POST", "/v1/admin/llm-config/test", {
     provider: "anthropic",
@@ -205,7 +270,7 @@ test("admin test endpoint probes the current or a candidate config", async () =>
     apiKey: "bad-key",
   });
   assert.equal(candidateBad?.status, 200);
-  assert.deepEqual(candidateBad?.body, {
+  assert.deepEqual(candidateBad !== undefined && "body" in candidateBad ? candidateBad.body : undefined, {
     ok: false,
     error: "401 invalid api key",
     target: 'catalog provider "anthropic"',
@@ -217,7 +282,7 @@ test("admin test endpoint probes the current or a candidate config", async () =>
     apiKey: "bad-key",
   });
   assert.equal(relayBad?.status, 200);
-  assert.deepEqual(relayBad?.body, {
+  assert.deepEqual(relayBad !== undefined && "body" in relayBad ? relayBad.body : undefined, {
     ok: false,
     error: "401 invalid api key",
     target: "POST https://relay.example.com/v1/chat/completions",
@@ -260,7 +325,11 @@ test("admin catalog lists real providers and models offline", async () => {
 
   const result = await handler("GET", "/v1/admin/catalog", undefined);
   assert.equal(result?.status, 200);
-  const providers = (result?.body as { providers: Array<{ id: string; models: Array<{ id: string }> }> }).providers;
+  const providers = (
+    result !== undefined && "body" in result
+      ? (result.body as { providers: Array<{ id: string; models: Array<{ id: string }> }> })
+      : undefined
+  )?.providers ?? [];
   assert.ok(providers.length > 10, "catalog must list built-in providers");
   const anthropic = providers.find((entry) => entry.id === "anthropic");
   assert.ok(anthropic && anthropic.models.length > 0, "anthropic models must be listed");

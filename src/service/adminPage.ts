@@ -34,6 +34,7 @@ export const ADMIN_PAGE_HTML = `<!doctype html>
 <body>
 <h1>Elysian Realm Agent — LLM 配置</h1>
 <div id="status" class="muted">加载中…</div>
+<div id="stats" class="muted" hidden></div>
 <fieldset>
   <label>接入方式</label>
   <div class="radio-row">
@@ -130,8 +131,29 @@ async function refreshStatus() {
   return body;
 }
 
+async function refreshStoreStats() {
+  // Best-effort: the host API is served alongside admin; a missing endpoint
+  // (e.g. standalone service) must not break the page.
+  try {
+    const { status, body } = await api("/v1/host/stats");
+    if (status !== 200 || !body?.totals) {
+      return;
+    }
+    const agents = (body.agents ?? [])
+      .map((agent) => \`\${agent.displayName}: \${agent.memories} 条记忆\`)
+      .join(" · ");
+    const stale = body.totals.staleMemories ?? 0;
+    const el = $("stats");
+    el.textContent = \`存储：\${body.totals.memories} 条记忆 / \${body.totals.conversationTurns} 轮对话\${agents ? \`（\${agents}）\` : ""}\${stale > 0 ? \`，90 天未用 \${stale} 条\` : ""}\`;
+    el.hidden = false;
+  } catch {
+    // ignore — stats are auxiliary
+  }
+}
+
 async function init() {
   const [{ body: cat }, status] = [await api("/v1/admin/catalog"), await refreshStatus()];
+  void refreshStoreStats();
   catalog = cat.providers ?? [];
   $("provider").innerHTML = catalog
     .map((entry) => \`<option value="\${entry.id}">\${entry.id}</option>\`)
@@ -165,6 +187,7 @@ $("save").addEventListener("click", async () => {
     $("apiKey").value = "";
     showResult(true, "已保存并热加载 — 对话端点已启用。");
     await refreshStatus();
+    void refreshStoreStats();
   } else {
     showResult(false, body.error?.message ?? \`保存失败 (HTTP \${status})\`);
   }
