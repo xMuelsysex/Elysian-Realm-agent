@@ -58,17 +58,39 @@ export function scoreMemoryRecord<Metadata>(
   const relevance = scoreRelevance(record, query);
   const recency = scoreRecency(record.createdAt, query.now);
   const importance = normalizeScore(record.importance / MEMORY_IMPORTANCE_MAX);
+  const emotion = query.emotionBias !== undefined
+    ? scoreEmotionCongruence(record, query.emotionBias)
+    : undefined;
   const finalScore =
     query.weights.relevance * relevance +
     query.weights.recency * recency +
-    query.weights.importance * importance;
+    query.weights.importance * importance +
+    (emotion !== undefined ? query.weights.emotion! * emotion : 0);
 
   return {
     relevance,
     recency,
     importance,
+    ...(emotion !== undefined ? { emotion } : {}),
     finalScore: normalizeScore(finalScore),
   };
+}
+
+/**
+ * Mood-congruent recall: how closely the record's emotional signature matches
+ * the agent's current state. Records without a signature score a neutral 0.5
+ * so emotionless (e.g. deterministic tick) memories stay competitive.
+ */
+function scoreEmotionCongruence<Metadata>(
+  record: MemoryRecord<Metadata>,
+  bias: { valence: number; arousal: number },
+): number {
+  if (record.emotion === undefined) {
+    return 0.5;
+  }
+  const valenceCongruence = 1 - Math.abs(bias.valence - record.emotion.valence) / 2;
+  const arousalCongruence = 1 - Math.abs(bias.arousal - record.emotion.arousal);
+  return normalizeScore((valenceCongruence + arousalCongruence) / 2);
 }
 
 export function cloneMemoryRecord<Metadata = Record<string, unknown>>(record: MemoryRecord<Metadata>): MemoryRecord<Metadata> {
@@ -166,9 +188,24 @@ function scoreSetOverlap(queryValues: ReadonlySet<string>, recordValues: Readonl
   return matches / queryValues.size;
 }
 
+const CJK_RUN = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff]+/g;
+
 function tokenize(value: string): Set<string> {
-  const matches = value.toLocaleLowerCase().match(/[a-z0-9_]+/g) ?? [];
-  return new Set(matches.map(normalizeToken).filter((token) => token.length > 0));
+  const lowered = value.toLocaleLowerCase();
+  const tokens: string[] = [...(lowered.match(/[a-z0-9_]+/g) ?? [])];
+  // CJK runs become overlapping bigrams (the Lucene CJKAnalyzer approach):
+  // "花园里" -> 花园, 园里. Without this, Chinese query text tokenizes to
+  // nothing and the relevance channel silently scores 0 for Chinese content.
+  for (const run of lowered.match(CJK_RUN) ?? []) {
+    if (run.length === 1) {
+      tokens.push(run);
+      continue;
+    }
+    for (let index = 0; index < run.length - 1; index += 1) {
+      tokens.push(run.slice(index, index + 2));
+    }
+  }
+  return new Set(tokens.map(normalizeToken).filter((token) => token.length > 0));
 }
 
 function normalizeToken(value: string): string {

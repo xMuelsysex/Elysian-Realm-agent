@@ -1,7 +1,11 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createAdaptorServer } from "@hono/node-server";
+import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { timingSafeEqual } from "node:crypto";
-import type { ConversationRunner } from "../conversation/conversationRunner.js";
+import { Hono } from "hono";
+import type { Context } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { streamSSE } from "hono/streaming";
 import {
   RealmConversationValidationError,
   executeRealmConversationV1,
@@ -10,6 +14,7 @@ import {
   RealmAgentStepValidationError,
   executeRealmAgentStepV1,
 } from "./realmStepExecutor.js";
+import type { ConversationRunner } from "../conversation/conversationRunner.js";
 
 export const AGENT_SERVICE_NAME = "elysian-realm-agent";
 export const DEFAULT_AGENT_SERVICE_HOST = "127.0.0.1";
@@ -26,9 +31,20 @@ export interface AgentServiceConfig {
  * route. Pure data so the service barrel stays free of pi imports; the real
  * handler is assembled in "./service/bootstrap".
  */
-export interface AdminRequestResult {
+export type AdminRequestResult = AdminJsonResult | AdminStreamResult;
+
+export interface AdminJsonResult {
   status: number;
   body: unknown;
+}
+
+/**
+ * SSE result: the service writes each emitted frame as an
+ * `event: <name>\ndata: <json>\n\n` chunk with `text/event-stream`.
+ */
+export interface AdminStreamResult {
+  status: number;
+  stream: (emit: (event: string, data: unknown) => void) => Promise<void>;
 }
 
 export type AdminRequestHandler = (
@@ -90,21 +106,113 @@ export function parseAgentServiceConfig(
   return { host, port };
 }
 
-export function createAgentService(options: AgentServiceOptions = {}): Server {
-  return createServer((request, response) => {
-    void handleRequest(request, response, options).catch((error) => {
-      if (response.headersSent) {
-        response.destroy(error instanceof Error ? error : undefined);
-        return;
-      }
-      writeJson(response, 500, {
-        error: {
-          code: "AGENT_SERVICE_ERROR",
-          message: error instanceof Error ? error.message : "unknown agent service error",
-        },
-      }, false);
-    });
+/**
+ * Builds the Hono app backing the service.
+ */
+function buildApp(options: AgentServiceOptions = {}): Hono {
+  const app = new Hono();
+
+  const resolveRunner = (): ConversationRunner | undefined =>
+    typeof options.conversationRunner === "function"
+      ? options.conversationRunner()
+      : options.conversationRunner;
+
+  app.onError((error, c) => {
+    return errorJson(c, 500, "AGENT_SERVICE_ERROR",
+      error instanceof Error ? error.message : "unknown agent service error");
   });
+
+  app.notFound((c) => {
+    if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+      c.header("allow", "GET, HEAD");
+      return errorJson(c, 405, "METHOD_NOT_ALLOWED", "method is not allowed");
+    }
+    return errorJson(c, 404, "NOT_FOUND", "route not found");
+  });
+
+  app.get("/healthz", (c) => c.json({ status: "ok", service: AGENT_SERVICE_NAME }));
+
+  app.get("/readyz", (c) =>
+    c.json({
+      status: "ready",
+      service: AGENT_SERVICE_NAME,
+      capabilities: [
+        "cognitive-loop",
+        "memory",
+        "affect",
+        "reflection",
+        "realm-agent-step.v1",
+        ...(resolveRunner() ? ["realm-conversation.v1"] : []),
+      ],
+    }),
+  );
+
+  registerExtension(app, "/admin", "/v1/admin", options.admin, "admin");
+  registerExtension(app, "/chat", "/v1/host", options.chat, "chat");
+
+  app.all(
+    "/v1/realm/steps",
+    async (c) => {
+      if (c.req.method !== "POST") {
+        c.header("allow", "POST");
+        return errorJson(c, 405, "METHOD_NOT_ALLOWED", "route requires POST");
+      }
+
+      const parsed = await readJsonBody(c);
+      if (!parsed.ok) {
+        return errorJson(c, parsed.status, parsed.code, parsed.message);
+      }
+
+      try {
+        return c.json(executeRealmAgentStepV1(parsed.value));
+      } catch (error) {
+        if (error instanceof RealmAgentStepValidationError) {
+          return errorJson(c, 400, "INVALID_REALM_AGENT_STEP", error.message);
+        }
+        throw error;
+      }
+    },
+  );
+
+  app.all(
+    "/v1/realm/conversations",
+    async (c) => {
+      if (c.req.method !== "POST") {
+        c.header("allow", "POST");
+        return errorJson(c, 405, "METHOD_NOT_ALLOWED", "route requires POST");
+      }
+
+      const runner = resolveRunner();
+      if (!runner) {
+        return errorJson(
+          c,
+          501,
+          "CONVERSATION_NOT_CONFIGURED",
+          "this service instance was started without a conversation runner",
+        );
+      }
+
+      const parsed = await readJsonBody(c);
+      if (!parsed.ok) {
+        return errorJson(c, parsed.status, parsed.code, parsed.message);
+      }
+
+      try {
+        return c.json(await executeRealmConversationV1(parsed.value, runner));
+      } catch (error) {
+        if (error instanceof RealmConversationValidationError) {
+          return errorJson(c, 400, "INVALID_REALM_CONVERSATION", error.message);
+        }
+        throw error;
+      }
+    },
+  );
+
+  return app;
+}
+
+export function createAgentService(options: AgentServiceOptions = {}): Server {
+  return createAdaptorServer({ fetch: buildApp(options).fetch }) as Server;
 }
 
 export async function startAgentService(
@@ -157,187 +265,114 @@ export async function stopAgentService(server: Server): Promise<void> {
   });
 }
 
-async function handleRequest(
-  request: IncomingMessage,
-  response: ServerResponse,
-  options: AgentServiceOptions,
-): Promise<void> {
-  const method = request.method ?? "GET";
-  const path = parsePath(request.url);
-  const resolveRunner = (): ConversationRunner | undefined =>
-    typeof options.conversationRunner === "function"
-      ? options.conversationRunner()
-      : options.conversationRunner;
-  if (path === undefined) {
-    writeJson(response, 400, { error: { code: "INVALID_REQUEST_URL", message: "request URL is invalid" } }, method === "HEAD");
-    return;
-  }
-
-  if ((method === "GET" || method === "HEAD") && path === "/healthz") {
-    writeJson(response, 200, { status: "ok", service: AGENT_SERVICE_NAME }, method === "HEAD");
-    return;
-  }
-
-  if ((method === "GET" || method === "HEAD") && path === "/readyz") {
-    writeJson(response, 200, {
-      status: "ready",
-      service: AGENT_SERVICE_NAME,
-      capabilities: [
-        "cognitive-loop",
-        "memory",
-        "affect",
-        "reflection",
-        "realm-agent-step.v1",
-        ...(resolveRunner() ? ["realm-conversation.v1"] : []),
-      ],
-    }, method === "HEAD");
-    return;
-  }
-
-  if (path === "/admin" || path.startsWith("/v1/admin/")) {
-    await handleExtensionRequest(request, response, method, path, options.admin, "/admin", "admin");
-    return;
-  }
-
-  if (path === "/chat" || path.startsWith("/v1/host/")) {
-    await handleExtensionRequest(request, response, method, path, options.chat, "/chat", "chat");
-    return;
-  }
-
-  if (path === "/v1/realm/steps") {
-    if (method !== "POST") {
-      response.setHeader("allow", "POST");
-      writeJson(response, 405, { error: { code: "METHOD_NOT_ALLOWED", message: "route requires POST" } }, false);
-      return;
-    }
-
-    const parsed = await readJsonBody(request);
-    if (!parsed.ok) {
-      writeJson(response, parsed.status, { error: { code: parsed.code, message: parsed.message } }, false);
-      return;
-    }
-
-    try {
-      writeJson(response, 200, executeRealmAgentStepV1(parsed.value), false);
-    } catch (error) {
-      if (error instanceof RealmAgentStepValidationError) {
-        writeJson(response, 400, { error: { code: "INVALID_REALM_AGENT_STEP", message: error.message } }, false);
-        return;
-      }
-      throw error;
-    }
-    return;
-  }
-
-  if (path === "/v1/realm/conversations") {
-    if (method !== "POST") {
-      response.setHeader("allow", "POST");
-      writeJson(response, 405, { error: { code: "METHOD_NOT_ALLOWED", message: "route requires POST" } }, false);
-      return;
-    }
-
-    const runner = resolveRunner();
-    if (!runner) {
-      writeJson(response, 501, {
-        error: {
-          code: "CONVERSATION_NOT_CONFIGURED",
-          message: "this service instance was started without a conversation runner",
-        },
-      }, false);
-      return;
-    }
-
-    const parsed = await readJsonBody(request);
-    if (!parsed.ok) {
-      writeJson(response, parsed.status, { error: { code: parsed.code, message: parsed.message } }, false);
-      return;
-    }
-
-    try {
-      writeJson(response, 200, await executeRealmConversationV1(parsed.value, runner), false);
-    } catch (error) {
-      if (error instanceof RealmConversationValidationError) {
-        writeJson(response, 400, { error: { code: "INVALID_REALM_CONVERSATION", message: error.message } }, false);
-        return;
-      }
-      throw error;
-    }
-    return;
-  }
-
-  if (method !== "GET" && method !== "HEAD") {
-    response.setHeader("allow", "GET, HEAD");
-    writeJson(response, 405, { error: { code: "METHOD_NOT_ALLOWED", message: "method is not allowed" } }, false);
-    return;
-  }
-
-  writeJson(response, 404, { error: { code: "NOT_FOUND", message: "route not found" } }, method === "HEAD");
-}
-
-async function handleExtensionRequest(
-  request: IncomingMessage,
-  response: ServerResponse,
-  method: string,
-  path: string,
-  extension: AdminOptions | undefined,
+function registerExtension(
+  app: Hono,
   pagePath: string,
+  apiPrefix: string,
+  extension: AdminOptions | undefined,
   name: string,
-): Promise<void> {
-  if (!extension) {
-    writeJson(response, 404, { error: { code: `${name.toUpperCase()}_NOT_ENABLED`, message: `${name} interface is not enabled on this service instance` } }, method === "HEAD");
-    return;
-  }
-
-  if (extension.token !== undefined && !hasValidAdminToken(request, extension.token)) {
-    writeJson(response, 403, { error: { code: `${name.toUpperCase()}_FORBIDDEN`, message: `missing or invalid ${name} token` } }, false);
-    return;
-  }
-
-  if (path === pagePath) {
-    if (method !== "GET" && method !== "HEAD") {
-      response.setHeader("allow", "GET, HEAD");
-      writeJson(response, 405, { error: { code: "METHOD_NOT_ALLOWED", message: "route requires GET" } }, false);
-      return;
+): void {
+  const gate = (c: Context): Response | undefined => {
+    if (extension === undefined) {
+      return errorJson(
+        c,
+        404,
+        `${name.toUpperCase()}_NOT_ENABLED`,
+        `${name} interface is not enabled on this service instance`,
+      );
     }
-    if (extension.page === undefined) {
-      writeJson(response, 404, { error: { code: `${name.toUpperCase()}_PAGE_NOT_CONFIGURED`, message: `no ${name} page configured` } }, method === "HEAD");
-      return;
+    if (
+      extension.token !== undefined &&
+      !hasValidAdminToken(c.req.header("authorization"), extension.token)
+    ) {
+      return errorJson(
+        c,
+        403,
+        `${name.toUpperCase()}_FORBIDDEN`,
+        `missing or invalid ${name} token`,
+      );
     }
-    const payload = extension.page;
-    response.statusCode = 200;
-    response.setHeader("content-type", "text/html; charset=utf-8");
-    response.setHeader("cache-control", "no-store");
-    response.setHeader("content-length", Buffer.byteLength(payload));
-    response.end(method === "HEAD" ? undefined : payload);
-    return;
-  }
+    return undefined;
+  };
 
-  let body: unknown;
-  if (method === "POST" || method === "PUT") {
-    const parsed = await readJsonBody(request);
-    if (!parsed.ok) {
-      // Allow empty bodies for extension POSTs (e.g. test with current config).
-      if (parsed.code === "INVALID_JSON" && parsed.message.includes("must contain JSON")) {
-        body = undefined;
+  app.all(pagePath, async (c) => {
+    const gateResult = gate(c);
+    if (gateResult !== undefined) {
+      return gateResult;
+    }
+    if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+      c.header("allow", "GET, HEAD");
+      return errorJson(c, 405, "METHOD_NOT_ALLOWED", "route requires GET");
+    }
+    if (extension!.page === undefined) {
+      return errorJson(
+        c,
+        404,
+        `${name.toUpperCase()}_PAGE_NOT_CONFIGURED`,
+        `no ${name} page configured`,
+      );
+    }
+    c.header("cache-control", "no-store");
+    return c.html(extension!.page);
+  });
+
+  app.all(`${apiPrefix}/*`, async (c) => {
+    // The bare prefix (no trailing slash) is not an extension route; fall
+    // through to the service-level 404/405 handling like the old matcher.
+    if (c.req.path === apiPrefix) {
+      return c.notFound();
+    }
+
+    const gateResult = gate(c);
+    if (gateResult !== undefined) {
+      return gateResult;
+    }
+
+    let body: unknown;
+    if (c.req.method === "POST" || c.req.method === "PUT") {
+      const parsed = await readJsonBody(c);
+      if (!parsed.ok) {
+        // Allow empty bodies for extension POSTs (e.g. test with current config).
+        if (parsed.code === "INVALID_JSON" && parsed.message.includes("must contain JSON")) {
+          body = undefined;
+        } else {
+          return errorJson(c, parsed.status, parsed.code, parsed.message);
+        }
       } else {
-        writeJson(response, parsed.status, { error: { code: parsed.code, message: parsed.message } }, false);
-        return;
+        body = parsed.value;
       }
-    } else {
-      body = parsed.value;
     }
-  }
 
-  const result = await extension.handler(method, path, body);
-  if (result === undefined) {
-    writeJson(response, 404, { error: { code: "NOT_FOUND", message: `${name} route not found` } }, false);
-    return;
-  }
-  writeJson(response, result.status, result.body, false);
+    const result = await extension!.handler(c.req.method, c.req.path, body);
+    if (result === undefined) {
+      return errorJson(c, 404, "NOT_FOUND", `${name} route not found`);
+    }
+    if ("stream" in result) {
+      c.header("cache-control", "no-store");
+      return streamSSE(c, async (stream) => {
+        // Emits arrive synchronously; chain writes so frames keep order.
+        let queued: Promise<void> = Promise.resolve();
+        const emit = (event: string, data: unknown): void => {
+          queued = queued.then(() => stream.writeSSE({ event, data: JSON.stringify(data) }));
+        };
+        await result.stream(emit);
+        await queued;
+      });
+    }
+    return c.json(result.body, result.status as ContentfulStatusCode);
+  });
 }
 
-function hasValidAdminToken(request: IncomingMessage, token: string): boolean {
-  const header = request.headers.authorization;
+function errorJson(
+  c: Context,
+  status: number,
+  code: string,
+  message: string,
+): Response {
+  return c.json({ error: { code, message } }, status as ContentfulStatusCode);
+}
+
+function hasValidAdminToken(header: string | undefined, token: string): boolean {
   if (typeof header !== "string") {
     return false;
   }
@@ -350,50 +385,70 @@ function hasValidAdminToken(request: IncomingMessage, token: string): boolean {
   return provided.length === expected.length && timingSafeEqual(provided, expected);
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<
+async function readJsonBody(
+  c: Context,
+): Promise<
   | { ok: true; value: unknown }
   | { ok: false; status: number; code: string; message: string }
 > {
-  const chunks: Buffer[] = [];
-  let totalBytes = 0;
-  for await (const chunk of request) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    totalBytes += buffer.byteLength;
-    if (totalBytes > MAX_BODY_BYTES) {
-      return { ok: false, status: 413, code: "REQUEST_TOO_LARGE", message: "request body exceeds 1 MiB" };
+  const rawBody = c.req.raw.body;
+  if (rawBody) {
+    const read = await streamBodyText(rawBody, MAX_BODY_BYTES);
+    if (!read.ok) {
+      return {
+        ok: false,
+        status: 413,
+        code: "REQUEST_TOO_LARGE",
+        message: "request body exceeds 1 MiB",
+      };
     }
-    chunks.push(buffer);
+    if (read.text.length > 0) {
+      try {
+        return { ok: true, value: JSON.parse(read.text) };
+      } catch {
+        return {
+          ok: false,
+          status: 400,
+          code: "INVALID_JSON",
+          message: "request body must be valid JSON",
+        };
+      }
+    }
   }
-
-  if (chunks.length === 0) {
-    return { ok: false, status: 400, code: "INVALID_JSON", message: "request body must contain JSON" };
-  }
-
-  try {
-    return { ok: true, value: JSON.parse(Buffer.concat(chunks).toString("utf8")) };
-  } catch {
-    return { ok: false, status: 400, code: "INVALID_JSON", message: "request body must be valid JSON" };
-  }
+  return {
+    ok: false,
+    status: 400,
+    code: "INVALID_JSON",
+    message: "request body must contain JSON",
+  };
 }
 
-function parsePath(requestUrl: string | undefined): string | undefined {
+/**
+ * Streams the request body to a string, stopping at maxBytes (same drain
+ * semantics as the previous hand-rolled node:http reader: the upload is
+ * consumed up to the cap so the client sees a clean 413 response).
+ */
+async function streamBodyText(
+  rawBody: ReadableStream<Uint8Array>,
+  maxBytes: number,
+): Promise<{ ok: true; text: string } | { ok: false }> {
+  const reader = rawBody.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
   try {
-    return new URL(requestUrl ?? "/", "http://localhost").pathname;
-  } catch {
-    return undefined;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        return { ok: false };
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
   }
-}
-
-function writeJson(
-  response: ServerResponse,
-  statusCode: number,
-  body: unknown,
-  headOnly: boolean,
-): void {
-  const payload = JSON.stringify(body);
-  response.statusCode = statusCode;
-  response.setHeader("content-type", "application/json; charset=utf-8");
-  response.setHeader("cache-control", "no-store");
-  response.setHeader("content-length", Buffer.byteLength(payload));
-  response.end(headOnly ? undefined : payload);
+  return { ok: true, text: Buffer.concat(chunks).toString("utf8") };
 }

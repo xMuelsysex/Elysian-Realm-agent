@@ -3,6 +3,7 @@ import {
   AFFINITY_MAX,
   AFFINITY_MIN,
   type AffinityChange,
+  type AffectState,
   type AgentMood,
   type AgentMoodWrite,
   type MoodChange,
@@ -10,6 +11,7 @@ import {
 } from "./affectRecords.js";
 import {
   validateAffinityInput,
+  validateAffectState,
   validateImportedMood,
   validateImportedRelationship,
   validateMoodWrite,
@@ -19,6 +21,7 @@ import {
 export interface InMemoryAffectStoreInit {
   relationships?: readonly RelationshipAffect[];
   moods?: readonly AgentMood[];
+  affectStates?: readonly AffectState[];
 }
 
 /**
@@ -28,6 +31,7 @@ export interface InMemoryAffectStoreInit {
 export class InMemoryAffectStore {
   private readonly relationships = new Map<string, RelationshipAffect>();
   private readonly moods = new Map<string, AgentMood>();
+  private readonly affectStates = new Map<string, AffectState>();
 
   constructor(init: InMemoryAffectStoreInit = {}) {
     for (const record of init.relationships ?? []) {
@@ -37,6 +41,10 @@ export class InMemoryAffectStore {
     for (const record of init.moods ?? []) {
       validateImportedMood(record);
       this.moods.set(record.agentId, { ...record });
+    }
+    for (const record of init.affectStates ?? []) {
+      validateAffectState(record);
+      this.affectStates.set(record.agentId, cloneAffectState(record));
     }
   }
 
@@ -74,6 +82,19 @@ export class InMemoryAffectStore {
   getMood(agentId: string): AgentMood | undefined {
     const record = this.moods.get(agentId);
     return record ? { ...record } : undefined;
+  }
+
+  getAffectState(agentId: string): AffectState | undefined {
+    const record = this.affectStates.get(agentId);
+    return record ? cloneAffectState(record) : undefined;
+  }
+
+  /** Replace the agent's emotional state with a validated, defensive copy. */
+  setAffectState(state: AffectState): AffectState {
+    validateAffectState(state);
+    const copy = cloneAffectState(state);
+    this.affectStates.set(state.agentId, copy);
+    return cloneAffectState(copy);
   }
 
   setMood(agentId: string, write: AgentMoodWrite, at: string): MoodChange {
@@ -115,4 +136,12 @@ export class InMemoryAffectStore {
 
 function relationKey(agentId: string, targetId: string): string {
   return `${agentId}\u0000${targetId}`;
+}
+
+function cloneAffectState(state: AffectState): AffectState {
+  return {
+    ...state,
+    emotionLabels: { ...state.emotionLabels },
+    baseline: { ...state.baseline },
+  };
 }

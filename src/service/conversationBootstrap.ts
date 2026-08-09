@@ -224,24 +224,27 @@ function createAdminHandler(
       if (!parsed.ok) {
         return adminBadRequest(parsed.message);
       }
+      // The page never echoes the stored key; a candidate that omits it
+      // keeps the stored one so save/test do not silently drop the key.
+      const config = withStoredApiKey(parsed.config, context);
 
       // Order matters: validate by building first, then persist, then swap —
       // the running service never diverges from what is on disk.
       let next: ConversationRuntime;
       try {
-        next = context.buildRuntime(parsed.config);
+        next = context.buildRuntime(config);
       } catch (error) {
         return adminBadRequest(errorText(error));
       }
       try {
-        saveLlmConfig(context.credentialsPath, parsed.config);
+        saveLlmConfig(context.credentialsPath, config);
       } catch (error) {
         return {
           status: 500,
           body: { error: { code: "LLM_CONFIG_PERSIST_FAILED", message: errorText(error) } },
         };
       }
-      context.swapRuntime(next, parsed.config, "admin");
+      context.swapRuntime(next, config, "admin");
       return { status: 200, body: hub.getStatus() };
     }
 
@@ -254,8 +257,8 @@ function createAdminHandler(
           if (!parsed.ok) {
             return adminBadRequest(parsed.message);
           }
-          probedConfig = parsed.config;
-          probe = context.buildRuntime(parsed.config).probeLlm;
+          probedConfig = withStoredApiKey(parsed.config, context);
+          probe = context.buildRuntime(probedConfig).probeLlm;
         } else {
           const runtime = context.getRuntime();
           if (!runtime) {
@@ -436,6 +439,24 @@ function parseAdminConfigBody(
   } catch (error) {
     return { ok: false, message: errorText(error) };
   }
+}
+
+/**
+ * Stored api keys are never echoed to the page; a candidate config that
+ * omits the key keeps the stored one (on save and probe) so the key is not
+ * silently dropped when the admin form is saved or tested without re-entering it.
+ */
+function withStoredApiKey(
+  candidate: StoredLlmConfig,
+  context: {
+    getActiveConfig: () => StoredLlmConfig | undefined;
+  },
+): StoredLlmConfig {
+  if (candidate.apiKey !== undefined) {
+    return candidate;
+  }
+  const stored = context.getActiveConfig();
+  return stored?.apiKey !== undefined ? { ...candidate, apiKey: stored.apiKey } : candidate;
 }
 
 /** Human-readable request target for diagnostics (never includes the key). */

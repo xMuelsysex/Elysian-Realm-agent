@@ -6,9 +6,11 @@
 // per-turn limit and mood intensity clamps to [0, 1], with clamping noted in
 // the reason so it stays observable.
 
-import type { AgentMood, RelationshipAffect } from "../affect/affectRecords.js";
+import type { AffectState, AgentMood, RelationshipAffect } from "../affect/affectRecords.js";
 import { MOOD_INTENSITY_MAX, MOOD_INTENSITY_MIN } from "../affect/affectRecords.js";
 import type { LlmPort, LlmRequestOptionsLike } from "../ports/ports.js";
+import { parseLlmJson, truncate } from "../llm/llmJson.js";
+import { describeAffectState } from "./conversationPrompt.js";
 import type {
   RealmConversationAffectV1,
   RealmConversationTurnV1,
@@ -22,6 +24,8 @@ export interface AffectAnalysisInput {
   participantDisplayName: string;
   relationship?: RelationshipAffect;
   mood?: AgentMood;
+  /** Plot-driven emotional state, when the host tracks one; grounds mood proposals. */
+  affect?: AffectState;
   /** The exchange to analyze, oldest first, including the agent's new reply. */
   turns: readonly RealmConversationTurnV1[];
 }
@@ -36,6 +40,7 @@ export function buildAffectAnalysisMessages(input: AffectAnalysisInput): {
   const moodLine = input.mood
     ? `current mood "${input.mood.mood}" at intensity ${input.mood.intensity.toFixed(2)}`
     : "no established mood";
+  const affectLine = input.affect ? `; emotional state ${describeAffectState(input.affect)}` : "";
 
   const transcript = input.turns
     .map((turn) =>
@@ -47,13 +52,14 @@ export function buildAffectAnalysisMessages(input: AffectAnalysisInput): {
     system: [
       "You analyze how a roleplayed character's feelings shift after a conversation exchange.",
       "Respond with a single JSON object and nothing else, using this shape:",
-      `{"affinityDelta": number in [-${MAX_CONVERSATION_AFFINITY_DELTA}, ${MAX_CONVERSATION_AFFINITY_DELTA}], "mood": string, "moodIntensity": number in [0, 1], "memoryImportance": integer in [0, 9], "reason": string}`,
+      `{"affinityDelta": number in [-${MAX_CONVERSATION_AFFINITY_DELTA}, ${MAX_CONVERSATION_AFFINITY_DELTA}], "mood": string, "moodIntensity": number in [0, 1], "memoryImportance": integer in [0, 9], "emotion": {"valence": number in [-1, 1], "arousal": number in [0, 1]}, "reason": string}`,
       "affinityDelta is the change in how the character feels about the participant caused by this exchange alone.",
+      "emotion is the feeling this exchange leaves the character with right now: valence negative..positive, arousal calm..intense (e.g. thrilled = 0.9/0.8, quietly content = 0.5/0.2, frustrated = -0.6/0.7, drained = -0.4/0.1).",
       "memoryImportance rates how much this exchange deserves to be remembered:",
       "7-9 promises, plans, confessions, or major personal revelations; 5-6 emotionally significant moments or new facts about each other; 3-4 ordinary topical conversation; 1-2 small talk and greetings.",
     ].join("\n"),
     user: [
-      `Character: ${input.agentDisplayName}; ${relationshipLine}; ${moodLine}.`,
+      `Character: ${input.agentDisplayName}; ${relationshipLine}; ${moodLine}${affectLine}.`,
       `Participant: ${input.participantDisplayName}.`,
       "Exchange:",
       transcript,
@@ -91,15 +97,14 @@ export async function runAffectAnalysis(
 }
 
 export function parseAffectAnalysis(content: string): RealmConversationAffectV1 {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stripCodeFence(content));
-  } catch {
+  const parsedResult = parseLlmJson(content);
+  if (!parsedResult.ok) {
     return {
       analysis: "failed",
       reason: `affect analysis returned non-JSON content: ${truncate(content, 120)}`,
     };
   }
+  const parsed = parsedResult.value;
 
   if (!isRecord(parsed)) {
     return { analysis: "failed", reason: "affect analysis JSON must be an object" };
@@ -109,6 +114,7 @@ export function parseAffectAnalysis(content: string): RealmConversationAffectV1 
   const affinityDelta = readAffinityDelta(parsed, notes);
   const mood = readMood(parsed, notes);
   const memoryImportance = readMemoryImportance(parsed, notes);
+  const emotion = readEmotion(parsed, notes);
 
   if (affinityDelta === undefined && mood === undefined) {
     return {
@@ -127,6 +133,7 @@ export function parseAffectAnalysis(content: string): RealmConversationAffectV1 
     ...(affinityDelta !== undefined ? { affinityDelta } : {}),
     ...(mood !== undefined ? { mood } : {}),
     ...(memoryImportance !== undefined ? { memoryImportance } : {}),
+    ...(emotion !== undefined ? { emotion } : {}),
   };
 }
 
@@ -185,14 +192,34 @@ function readMemoryImportance(parsed: Record<string, unknown>, notes: string[]):
   return clamped;
 }
 
-function stripCodeFence(content: string): string {
-  const trimmed = content.trim();
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/.exec(trimmed);
-  return fenced ? fenced[1] : trimmed;
-}
+function readEmotion(
+  parsed: Record<string, unknown>,
+  notes: string[],
+): { valence: number; arousal: number } | undefined {
+  const raw = parsed.emotion;
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    notes.push("ignored non-object emotion");
+    return undefined;
+  }
 
-function truncate(value: string, maxLength: number): string {
-  return value.length <= maxLength ? value : `${value.slice(0, maxLength)}…`;
+  const { valence, arousal } = raw as Record<string, unknown>;
+  if (typeof valence !== "number" || !Number.isFinite(valence) ||
+      typeof arousal !== "number" || !Number.isFinite(arousal)) {
+    notes.push("ignored emotion with non-numeric valence or arousal");
+    return undefined;
+  }
+
+  const clampedValence = Math.min(1, Math.max(-1, valence));
+  const clampedArousal = Math.min(1, Math.max(0, arousal));
+  if (clampedValence !== valence) {
+    notes.push(`emotion.valence clamped from ${valence} to ${clampedValence}`);
+  }
+  if (clampedArousal !== arousal) {
+    notes.push(`emotion.arousal clamped from ${arousal} to ${clampedArousal}`);
+  }
+
+  return { valence: clampedValence, arousal: clampedArousal };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

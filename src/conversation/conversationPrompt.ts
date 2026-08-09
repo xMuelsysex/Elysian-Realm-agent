@@ -2,8 +2,9 @@
 // agent's persona, affect state, and retrieved memories into a system prompt.
 // No LLM or pi dependency lives here.
 
-import type { AgentMood, RelationshipAffect } from "../affect/affectRecords.js";
-import type { MemoryRetrievalHit } from "../memory/memoryRecords.js";
+import type { AffectState, AgentMood, RelationshipAffect } from "../affect/affectRecords.js";
+import { EMOTION_LABELS, type EmotionLabel } from "../affect/affectRecords.js";
+import type { EmotionSignature, MemoryRetrievalHit } from "../memory/memoryRecords.js";
 import type {
   RealmConversationAgentV1,
   RealmConversationParticipantV1,
@@ -14,6 +15,8 @@ export interface ConversationPromptInput<Metadata = Record<string, unknown>> {
   participant: RealmConversationParticipantV1;
   relationship?: RelationshipAffect;
   mood?: AgentMood;
+  /** Plot-driven emotional state snapshot, when the host tracks one. */
+  affect?: AffectState;
   memoryHits: readonly MemoryRetrievalHit<Metadata>[];
   /** Current time; enables relative timestamps on memories and "time since last chat". */
   now?: string;
@@ -47,10 +50,84 @@ export function describeRelativeTime(from: string, to: string): string {
   return `${months} month${months === 1 ? "" : "s"} ago`;
 }
 
+/**
+ * Human-shaped description of a memory's emotional signature: quadrant label
+ * with an intensity modifier, e.g. "strongly joyful and energized".
+ */
+export function describeEmotion(emotion: EmotionSignature): string {
+  const { valence, arousal } = emotion;
+
+  let core: string;
+  if (valence >= 0.2) {
+    core = arousal >= 0.55 ? "joyful and energized" : "warm and content";
+  } else if (valence <= -0.2) {
+    core = arousal >= 0.55 ? "tense and unsettled" : "heavy and low";
+  } else {
+    core = arousal >= 0.55 ? "alert and stirred" : "calm and neutral";
+  }
+
+  const modifier = Math.abs(valence) >= 0.7 ? "strongly " : "";
+  return `${modifier}${core}`;
+}
+
+/**
+ * Human-shaped description of an affect snapshot: the mood quadrant (shared
+ * with memory signatures) plus the prominent GoEmotions labels, e.g.
+ * "tense and unsettled; prominent feelings: fear (0.60), nervousness (0.40)".
+ */
+export function describeAffectState(affect: AffectState): string {
+  const core = describeEmotion({ valence: affect.valence, arousal: affect.arousal });
+  const prominent = prominentEmotionLabels(affect);
+  if (prominent.length === 0) {
+    return core;
+  }
+  const labels = prominent
+    .map((entry) => `${entry.label} (${entry.strength.toFixed(2)})`)
+    .join(", ");
+  return `${core}; prominent feelings: ${labels}`;
+}
+
+/** Strongest non-neutral labels at or above this strength count as prominent. */
+export const PROMINENT_EMOTION_MIN_STRENGTH = 0.25;
+
+/** Strongest non-neutral labels, strength >= 0.25, most intense first. */
+export function prominentEmotionLabels(
+  affect: AffectState,
+  limit = 2,
+): { label: EmotionLabel; strength: number }[] {
+  return EMOTION_LABELS
+    .filter((label) => label !== "neutral")
+    .map((label) => ({ label, strength: affect.emotionLabels[label] }))
+    .filter((entry) => entry.strength >= PROMINENT_EMOTION_MIN_STRENGTH)
+    .sort((a, b) => b.strength - a.strength)
+    .slice(0, limit);
+}
+
+/**
+ * Deterministic expression constraints derived from the affect snapshot,
+ * injected as guidance so the reply's tone follows the emotional state.
+ */
+export function affectExpressionGuidance(affect: AffectState): readonly string[] {
+  const guidance: string[] = [];
+  if (affect.arousal >= 0.7) {
+    guidance.push("you are highly stirred — answer in shorter, more urgent sentences");
+  }
+  if (affect.valence <= -0.4) {
+    guidance.push("weigh your words; the tone is subdued and heavy");
+  }
+  if (affect.emotionLabels.fear >= 0.55) {
+    guidance.push("you feel uneasy — keep answers guarded and avoid dwelling on what frightens you");
+  }
+  if (affect.emotionLabels.anger >= 0.55) {
+    guidance.push("you are irritated — your words carry a sharp edge");
+  }
+  return guidance;
+}
+
 export function buildConversationSystemPrompt<Metadata>(
   input: ConversationPromptInput<Metadata>,
 ): string {
-  const { agent, participant, relationship, mood, memoryHits, now, lastTurnAt } = input;
+  const { agent, participant, relationship, mood, affect, memoryHits, now, lastTurnAt } = input;
 
   const sections: string[] = [
     `You are ${agent.displayName} (persona ${agent.personaId}), a character living in the Elysian Realm simulation.`,
@@ -73,10 +150,22 @@ export function buildConversationSystemPrompt<Metadata>(
     : `Relationship with ${participant.displayName}: no established relationship yet.`;
   sections.push(`${moodLine}\n${relationshipLine}`);
 
+  if (affect) {
+    const affectLines = [`Current emotional state: ${describeAffectState(affect)}.`];
+    const guidance = affectExpressionGuidance(affect);
+    if (guidance.length > 0) {
+      affectLines.push(guidance.join("; "));
+    }
+    sections.push(affectLines.join("\n"));
+  }
+
   if (memoryHits.length > 0) {
     const lines = memoryHits.map((hit) => {
       const when = now !== undefined ? `(${describeRelativeTime(hit.record.createdAt, now)}) ` : "";
-      return `- ${when}[${hit.record.kind}] ${hit.record.content}`;
+      const emotion = hit.record.emotion !== undefined
+        ? ` — at the time you felt ${describeEmotion(hit.record.emotion)}`
+        : "";
+      return `- ${when}[${hit.record.kind}] ${hit.record.content}${emotion}`;
     });
     sections.push(`Memories relevant to this conversation:\n${lines.join("\n")}`);
   } else {

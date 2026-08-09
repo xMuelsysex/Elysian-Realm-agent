@@ -3,12 +3,23 @@
 // kept private per domain until a third domain motivates a shared module.
 
 import {
+  AFFECT_AROUSAL_MAX,
+  AFFECT_AROUSAL_MIN,
+  AFFECT_LABEL_MAX,
+  AFFECT_LABEL_MIN,
+  AFFECT_VALENCE_MAX,
+  AFFECT_VALENCE_MIN,
   AFFINITY_MAX,
   AFFINITY_MIN,
+  EMOTION_LABELS,
   MOOD_INTENSITY_MAX,
   MOOD_INTENSITY_MIN,
+  PLOT_EVENT_TARGETS,
+  PLOT_EVENT_TYPES,
+  type AffectState,
   type AgentMood,
   type AgentMoodWrite,
+  type PlotEvent,
   type RelationshipAffect,
 } from "./affectRecords.js";
 
@@ -91,9 +102,81 @@ export function validateImportedMood(record: AgentMood): void {
   throwIfErrors(errors);
 }
 
+export function validateAffectState(record: AffectState): void {
+  const errors: string[] = [];
+  validateNonEmptyString(record.agentId, "affectState.agentId", errors);
+  validateBoundedNumber(
+    record.valence,
+    "affectState.valence",
+    AFFECT_VALENCE_MIN,
+    AFFECT_VALENCE_MAX,
+    errors,
+  );
+  validateBoundedNumber(
+    record.arousal,
+    "affectState.arousal",
+    AFFECT_AROUSAL_MIN,
+    AFFECT_AROUSAL_MAX,
+    errors,
+  );
+  validateBoundedNumber(
+    record.baseline.valence,
+    "affectState.baseline.valence",
+    AFFECT_VALENCE_MIN,
+    AFFECT_VALENCE_MAX,
+    errors,
+  );
+  validateBoundedNumber(
+    record.baseline.arousal,
+    "affectState.baseline.arousal",
+    AFFECT_AROUSAL_MIN,
+    AFFECT_AROUSAL_MAX,
+    errors,
+  );
+  for (const label of EMOTION_LABELS) {
+    validateBoundedNumber(
+      record.emotionLabels[label],
+      `affectState.emotionLabels.${label}`,
+      AFFECT_LABEL_MIN,
+      AFFECT_LABEL_MAX,
+      errors,
+    );
+  }
+  validateIsoDate(record.updatedAt, "affectState.updatedAt", errors);
+  throwIfErrors(errors);
+}
+
+export function validatePlotEvent(event: PlotEvent): void {
+  const errors: string[] = [];
+  validateNonEmptyString(event.id, "plotEvent.id", errors);
+  if (!PLOT_EVENT_TYPES.includes(event.type)) {
+    errors.push(`plotEvent.type must be one of: ${PLOT_EVENT_TYPES.join(", ")}`);
+  }
+  if (!PLOT_EVENT_TARGETS.includes(event.target)) {
+    errors.push(`plotEvent.target must be one of: ${PLOT_EVENT_TARGETS.join(", ")}`);
+  }
+  validateBoundedNumber(event.intensity, "plotEvent.intensity", 0, 1, errors);
+  validateIsoDate(event.at, "plotEvent.at", errors);
+  throwIfErrors(errors);
+}
+
 function throwIfErrors(errors: readonly string[]): void {
   if (errors.length > 0) {
     throw new AffectValidationError(errors);
+  }
+}
+
+function validateBoundedNumber(
+  value: unknown,
+  path: string,
+  min: number,
+  max: number,
+  errors: string[],
+): void {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    errors.push(`${path} must be a finite number`);
+  } else if (value < min || value > max) {
+    errors.push(`${path} must be a number from ${min} to ${max}`);
   }
 }
 

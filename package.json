@@ -36,17 +36,22 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js",
     "start": "node dist/service/main.js",
-    "host": "node dist/host/main.js"
+    "host": "node dist/host/main.js",
+    "verify:e2e": "npm run build && bash scripts/run-e2e.sh",
+    "verify": "npm test && npm run verify:e2e"
   },
   "engines": {
     "node": ">=22.19.0"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "0.82.1",
-    "@earendil-works/pi-ai": "0.82.1"
+    "@earendil-works/pi-agent-core": "0.84.1",
+    "@earendil-works/pi-ai": "0.84.1",
+    "@hono/node-server": "2.1.0",
+    "hono": "4.13.1",
+    "jsonrepair": "3.15.0"
   },
   "devDependencies": {
-    "@types/node": "^20.11.30",
+    "@types/node": "22.20.1",
     "typescript": "^5.4.5"
   }
 }

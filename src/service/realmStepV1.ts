@@ -5,6 +5,7 @@ import type {
   ReflectionStatus,
   ReflectionTrigger,
 } from "../index.js";
+import type { AffectState, PlotEvent } from "../affect/affectRecords.js";
 
 export const REALM_AGENT_STEP_SCHEMA_VERSION = "realm-agent-step.v1" as const;
 
@@ -71,6 +72,20 @@ export interface RealmAgentStepInputV1 {
   perception: RealmAgentPerceptionV1;
   memories: readonly RealmMemoryRecordV1[];
   skipCognitiveTick?: boolean;
+  /** The agent's current emotional state as owned by the host, if established. */
+  affectState?: AffectState;
+  /** Plot events since the last step; the host feeds the plot, not the core. */
+  plotEvents?: readonly PlotEvent[];
+}
+
+/**
+ * Proposed affect movement from a step: the full new emotional state plus the
+ * affinity shift toward the host participant. The host applies or discards.
+ */
+export interface RealmAffectProposalV1 {
+  affect: AffectState;
+  /** Proposed affinity delta toward the host participant; 0 when no host-targeted events. */
+  affinityDelta: number;
 }
 
 export interface RealmAgentStepRequestV1 {
@@ -97,6 +112,8 @@ export interface RealmAgentStepOutputV1 {
   activeRoutine?: RealmActiveRoutineV1;
   memories: readonly RealmMemoryRecordV1[];
   reflection: RealmReflectionDiagnosticV1;
+  /** Present when the step carried affect state or plot events. */
+  affectProposal?: RealmAffectProposalV1;
 }
 
 export interface RealmAgentStepResponseV1 {

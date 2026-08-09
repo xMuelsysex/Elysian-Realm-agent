@@ -184,3 +184,76 @@ test("tick and conversation tracks close the loop through shared memory and affe
   // Affect accumulated across both tracks in one authoritative store.
   assert.equal(affectStore.getRelationship(AGENT_ID, PARTICIPANT_ID)?.affinity, 24);
 });
+
+test("emotional signatures survive the full loop into the next conversation prompt", async () => {
+  // First exchange: the analysis stamps an emotion onto the proposed writes.
+  const analysisLlm: LlmPort = {
+    name: "fake-analysis",
+    model: "fake",
+    completeChat: () =>
+      Promise.resolve({
+        content:
+          '{"affinityDelta": 3, "mood": "moved", "moodIntensity": 0.7, "memoryImportance": 7, "emotion": {"valence": 0.9, "arousal": 0.6}, "reason": "confession"}',
+      }),
+  };
+  const runner = createConversationRunner({
+    reply: { generateReply: () => Promise.resolve({ content: "I treasure every moment with you." }) },
+    analysisLlm,
+  });
+
+  const baseRequest = {
+    schemaVersion: REALM_CONVERSATION_SCHEMA_VERSION,
+    conversationId: "conv_1",
+    now: CONVERSATION_NOW,
+    agent: {
+      agentId: AGENT_ID,
+      personaId: "elysia",
+      displayName: "Elysia",
+      persona: "A cheerful gardener of the Elysian Realm.",
+    },
+    participant: { participantId: PARTICIPANT_ID, displayName: "Muelsyse" },
+    memories: [] as readonly RealmMemoryRecordV1[],
+    history: [],
+    message: { messageId: "msg_1", content: "You mean so much to me." },
+  };
+  const first = await runner.run(baseRequest);
+  assert.deepEqual(first.affect.emotion, { valence: 0.9, arousal: 0.6 });
+
+  // The host applies the writes; the emotion survives storage and retrieval.
+  const hostMemoryStore = new InMemoryMemoryStore<RealmMemoryMetadataV1>();
+  for (const write of first.memoryWrites) {
+    hostMemoryStore.remember(AGENT_ID, write);
+  }
+  assert.deepEqual(hostMemoryStore.list(AGENT_ID)[0]?.emotion, { valence: 0.9, arousal: 0.6 });
+
+  // Second exchange: retrieval surfaces the emotional memory into the prompt.
+  const replyInputs: ConversationReplyInput[] = [];
+  const secondRunner = createConversationRunner({
+    reply: {
+      generateReply(input) {
+        replyInputs.push(input);
+        return Promise.resolve({ content: "I remember." });
+      },
+    },
+    analysisLlm: {
+      name: "fake-analysis",
+      model: "fake",
+      completeChat: () =>
+        Promise.resolve({
+          content: '{"affinityDelta": 0, "mood": "warm", "moodIntensity": 0.6, "reason": "x"}',
+        }),
+    },
+  });
+  await secondRunner.run({
+    ...baseRequest,
+    conversationId: "conv_2",
+    memories: hostMemoryStore.list(AGENT_ID),
+    message: { messageId: "msg_2", content: "Do you remember what you said?" },
+  });
+
+  assert.match(
+    replyInputs[0].systemPrompt,
+    /at the time you felt strongly joyful and energized/,
+    "the next conversation must recall how the agent felt back then",
+  );
+});

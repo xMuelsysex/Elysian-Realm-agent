@@ -31,6 +31,7 @@ Host applications continue to own authoritative world state, action application,
 
 - Node `>=22.19.0`.
 - `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core`, pinned exactly to `0.82.1` (`save-exact` is enforced via `.npmrc`). Upgrade deliberately against the upstream changelog's Breaking Changes sections.
+- `hono` + `@hono/node-server` (HTTP layer, zero transitive deps), `jsonrepair` (tolerant LLM JSON parsing), and the built-in `node:sqlite` (host persistence) back the service and host processes.
 - The package root entrypoint stays free of pi imports; pi code is reachable only through the `./llm/pi-ai` and `./conversation/pi` subpaths, so the core loop remains host-independent and offline-testable.
 
 ## Install and verify
@@ -54,11 +55,14 @@ npm run host     # stateful realm host: chat UI + persistence + tick scheduler
 
 ### Realm host (`npm run host`)
 
-The host is the authoritative process that makes agents "live": it owns and persists world state under `./realm-data/` (`ELYSIAN_REALM_DATA` to override) — persona config (`realm.json`, hand-editable, seeded with a default persona on first run), memory streams, affect snapshots, conversation histories, and tick state. It applies conversation proposals (memory writes, affinity deltas, moods) automatically, and runs a deterministic routine tick whenever the local wall-clock period changes (morning 6–11, day 11–17, evening 17–22, night otherwise), so agents accumulate a daily life between conversations.
+The host is the authoritative process that makes agents "live": it owns and persists world state under `./realm-data/` (`ELYSIAN_REALM_DATA` to override) — persona config (`realm.json`, hand-editable, seeded with a default persona on first run) plus a SQLite store (`realm.sqlite`, via the built-in `node:sqlite`) holding memory streams, affect snapshots, conversation histories, and tick state, with one transaction per mutation. Legacy full-snapshot JSON files (memories/affect/conversations/tick) are imported once on first open. It applies conversation proposals (memory writes, affinity deltas, moods) automatically, and runs a deterministic routine tick whenever the local wall-clock period changes (morning 6–11, day 11–17, evening 17–22, night otherwise), so agents accumulate a daily life between conversations.
 
 - `GET /chat` — chat UI with a live affinity/mood badge
 - `GET /admin` — LLM configuration (same as the service)
-- `GET /v1/host/state`, `GET /v1/host/history/{agentId}`, `POST /v1/host/chat`
+- `GET /v1/host/state` — agent summaries with live affinity/mood/affect
+- `GET /v1/host/stats` — non-destructive store counts + retention diagnostics (per-agent memories/turns, oldestMemoryAt, 90-day-unused staleMemories, SQLite bytes)
+- `GET /v1/host/history/{agentId}` — conversation turns
+- `POST /v1/host/chat` — one exchange; send `{"agentId", "content", "stream": true}` for SSE: `delta` frames (reply text), `done` (reply complete — UI unlocks), `applied` (final affinity/mood after analysis), `error` on failures; omit `stream` for the JSON response
 
 Configuration:
 
@@ -125,3 +129,23 @@ import {
 ```
 
 Package internals remain host-independent. Imports from an Elysian Realm application source tree belong in host-side adapter layers.
+
+### End-to-end verification (`npm run verify:e2e`)
+
+Runs the full SSE streaming pipeline against a local OpenAI-compatible stub
+(`tests/e2e/llm-stub.mjs`): pi-ai's HTTP streaming client, the text-delta
+subscription, host persistence, and the JSON fallback contract. It verifies
+the live code path that unit tests cannot (real stream parsing, event
+ordering, first-delta latency). To verify against a real relay instead:
+
+```bash
+ELYSIAN_CREDENTIALS_PATH=~/.elysian-realm/credentials.json bash scripts/run-e2e.sh
+```
+
+## Known limitations
+
+- `node:sqlite` is experimental before Node 25.7 (unflagged since 22.13); the store works on the declared `>=22.19` range but prints an experimental warning on older versions.
+- Conversation history is stored without a retention cap — it grows with usage. `GET /v1/host/stats` reports per-agent memory/turn counts plus 90-day-unused prune candidates to inform a cleanup decision.
+- Legacy pre-SQLite JSON files (`memories.json` etc.) are imported once and then left as stale artifacts; they can be deleted by hand after a successful start.
+- Chat replies stream progressively (SSE); the affect analysis runs after the reply completes, so the badge may update a moment after the reply appears.
+- Browser-level verification (Playwright) is manual — see `.claude/specs/host-runtime.md` for the process-management notes.

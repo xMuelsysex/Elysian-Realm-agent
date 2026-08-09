@@ -123,6 +123,71 @@ test("invalid memory writes fail visibly and do not store fake records", () => {
   assert.equal(store.list(AGENT_ID).length, 0);
 });
 
+test("memory writes carry emotional signatures through validation and the store", () => {
+  const store = new InMemoryMemoryStore();
+
+  const stored = store.remember(AGENT_ID, {
+    kind: "conversation",
+    content: "Muelsyse invited me to the flower garden.",
+    createdAt: NOW,
+    importance: 6,
+    sourceIds: ["user_muelsyse"],
+    emotion: { valence: 0.9, arousal: 0.6 },
+  });
+
+  assert.deepEqual(stored.emotion, { valence: 0.9, arousal: 0.6 });
+  assert.deepEqual(store.list(AGENT_ID)[0]?.emotion, { valence: 0.9, arousal: 0.6 });
+
+  const emotionFree = store.remember(AGENT_ID, {
+    kind: "observation",
+    content: "The garden is quiet today.",
+    createdAt: NOW,
+    importance: 3,
+    sourceIds: ["event_2"],
+  });
+  assert.equal(emotionFree.emotion, undefined);
+});
+
+test("out-of-bound emotion signatures fail validation instead of being stored", () => {
+  const store = new InMemoryMemoryStore();
+
+  assert.throws(
+    () =>
+      store.remember(AGENT_ID, {
+        kind: "conversation",
+        content: "bad valence",
+        createdAt: NOW,
+        importance: 4,
+        sourceIds: ["user_muelsyse"],
+        emotion: { valence: 2, arousal: 0.5 },
+      }),
+    (error) => {
+      assert.ok(error instanceof MemoryValidationError);
+      assert.match(error.message, /emotion\.valence/);
+      return true;
+    },
+  );
+
+  assert.throws(
+    () =>
+      store.remember(AGENT_ID, {
+        kind: "conversation",
+        content: "bad arousal",
+        createdAt: NOW,
+        importance: 4,
+        sourceIds: ["user_muelsyse"],
+        emotion: { valence: 0.5, arousal: 1.5 },
+      }),
+    (error) => {
+      assert.ok(error instanceof MemoryValidationError);
+      assert.match(error.message, /emotion\.arousal/);
+      return true;
+    },
+  );
+
+  assert.equal(store.list(AGENT_ID).length, 0);
+});
+
 test("duplicate memory ids are rejected without overwriting existing records", () => {
   const store = new InMemoryMemoryStore();
 
@@ -135,6 +200,100 @@ test("duplicate memory ids are rejected without overwriting existing records", (
   assert.deepEqual(
     store.list(AGENT_ID).map((record) => record.content),
     ["Elysia noticed a quiet garden routine."],
+  );
+});
+
+test("emotion bias ranks mood-congruent memories higher", () => {
+  const store = new InMemoryMemoryStore();
+  store.remember(
+    AGENT_ID,
+    memoryWrite({
+      id: "memory_happy",
+      content: "那天的午后阳光很好。",
+      createdAt: "2026-07-03T12:00:00.000Z",
+      importance: 3,
+      tags: [],
+      emotion: { valence: 0.8, arousal: 0.6 },
+    }),
+  );
+  store.remember(
+    AGENT_ID,
+    memoryWrite({
+      id: "memory_sad",
+      content: "那天雨下了一整晚。",
+      createdAt: "2026-07-03T12:30:00.000Z",
+      importance: 3,
+      tags: [],
+      emotion: { valence: -0.7, arousal: 0.3 },
+    }),
+  );
+
+  // Happy agent: the happy memory must outrank the sad one on emotion alone.
+  const happy = store.retrieve(AGENT_ID, {
+    text: "今天",
+    now: NOW,
+    topK: 2,
+    emotionBias: { valence: 0.8, arousal: 0.6 },
+    weights: { relevance: 0, recency: 0, importance: 0, emotion: 1 },
+  });
+  assert.equal(happy.hits[0]?.record.id, "memory_happy");
+  assert.ok((happy.hits[0]?.score.emotion ?? 0) > (happy.hits[1]?.score.emotion ?? 0));
+
+  // Sad agent: the ranking flips.
+  const sad = store.retrieve(AGENT_ID, {
+    text: "今天",
+    now: NOW,
+    topK: 2,
+    emotionBias: { valence: -0.7, arousal: 0.3 },
+    weights: { relevance: 0, recency: 0, importance: 0, emotion: 1 },
+  });
+  assert.equal(sad.hits[0]?.record.id, "memory_sad");
+});
+
+test("retrieval without an emotion bias is unchanged (emotion score absent)", () => {
+  const store = new InMemoryMemoryStore();
+  store.remember(
+    AGENT_ID,
+    memoryWrite({
+      id: "memory_emo",
+      content: "A memory with an emotion signature.",
+      createdAt: "2026-07-03T12:00:00.000Z",
+      importance: 5,
+      tags: [],
+      emotion: { valence: 0.8, arousal: 0.6 },
+    }),
+  );
+
+  const result = store.retrieve(AGENT_ID, {
+    text: "memory",
+    now: NOW,
+    topK: 1,
+  });
+  assert.equal(result.hits[0]?.record.id, "memory_emo");
+  assert.equal(result.hits[0]?.score.emotion, undefined, "no bias means no emotion term");
+});
+
+test("retrieval rejects out-of-range emotion bias values visibly", () => {
+  const store = seedStore();
+  assert.throws(
+    () =>
+      store.retrieve(AGENT_ID, {
+        text: "garden",
+        now: NOW,
+        topK: 1,
+        emotionBias: { valence: 5, arousal: 0.5 },
+      }),
+    /emotionBias\.valence/,
+  );
+  assert.throws(
+    () =>
+      store.retrieve(AGENT_ID, {
+        text: "garden",
+        now: NOW,
+        topK: 1,
+        emotionBias: { valence: 0.5, arousal: -0.2 },
+      }),
+    /emotionBias\.arousal/,
   );
 });
 
@@ -166,6 +325,43 @@ test("retrieval ranking can be relevance dominant", () => {
 
   assert.equal(result.hits[0]?.record.id, "memory_old_relevant");
   assert.equal(result.hits[0]?.score.relevance, 1);
+});
+
+test("chinese queries score relevance through cjk bigram tokenization", () => {
+  const store = new InMemoryMemoryStore();
+  store.remember(
+    AGENT_ID,
+    memoryWrite({
+      id: "memory_cn_garden",
+      content: "今天在花园里照料向日葵。",
+      createdAt: "2026-07-03T12:00:00.000Z",
+      importance: 3,
+      tags: [],
+    }),
+  );
+  store.remember(
+    AGENT_ID,
+    memoryWrite({
+      id: "memory_cn_meal",
+      content: "晚饭吃了红烧肉。",
+      createdAt: "2026-07-03T12:30:00.000Z",
+      importance: 9,
+      tags: [],
+    }),
+  );
+
+  const result = store.retrieve(AGENT_ID, {
+    text: "在花园里做什么",
+    now: NOW,
+    topK: 2,
+    weights: { relevance: 1, recency: 0, importance: 0 },
+  });
+
+  assert.equal(result.hits[0]?.record.id, "memory_cn_garden", "chinese content must match a chinese query");
+  assert.ok(
+    (result.hits[0]?.score.relevance ?? 0) > 0,
+    "relevance must not silently score 0 for chinese text",
+  );
 });
 
 test("retrieval ranking can be recency dominant", () => {

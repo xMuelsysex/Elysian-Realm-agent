@@ -1,10 +1,15 @@
 import {
   DEFAULT_MEMORY_RETRIEVAL_TOP_K,
   DEFAULT_MEMORY_RETRIEVAL_WEIGHTS,
+  EMOTION_AROUSAL_MAX,
+  EMOTION_AROUSAL_MIN,
+  EMOTION_VALENCE_MAX,
+  EMOTION_VALENCE_MIN,
   MEMORY_IMPORTANCE_MAX,
   MEMORY_IMPORTANCE_MIN,
   MEMORY_KINDS,
   MEMORY_VISIBILITIES,
+  type EmotionSignature,
   type MemoryKind,
   type MemoryRetrievalQuery,
   type MemoryRetrievalWeights,
@@ -42,6 +47,7 @@ export function validateMemoryWrite<Metadata = Record<string, unknown>>(
   const relatedMemoryIds = normalizeStringArray(write.relatedMemoryIds ?? [], "write.relatedMemoryIds", errors, { required: false });
   const tags = normalizeStringArray(write.tags ?? [], "write.tags", errors, { required: false });
   const visibility = validateVisibility(write.visibility ?? "private", "write.visibility", errors);
+  const emotion = validateEmotion(write.emotion, "write.emotion", errors);
 
   if (errors.length > 0) {
     throw new MemoryValidationError(errors);
@@ -57,6 +63,7 @@ export function validateMemoryWrite<Metadata = Record<string, unknown>>(
     relatedMemoryIds,
     visibility,
     tags,
+    emotion,
     metadata: (write.metadata ?? {}) as Metadata,
   };
 }
@@ -70,6 +77,7 @@ export function validateMemoryRetrievalQuery(query: MemoryRetrievalQuery): Norma
   const tags = normalizeStringArray(query.tags ?? [], "query.tags", errors, { required: false });
   const sourceIds = normalizeStringArray(query.sourceIds ?? [], "query.sourceIds", errors, { required: false });
   const weights = validateWeights(query.weights ?? {}, errors);
+  const emotionBias = validateEmotionBias(query.emotionBias, errors);
 
   if (errors.length > 0) {
     throw new MemoryValidationError(errors);
@@ -82,7 +90,26 @@ export function validateMemoryRetrievalQuery(query: MemoryRetrievalQuery): Norma
     tags,
     sourceIds,
     weights,
+    ...(emotionBias !== undefined ? { emotionBias } : {}),
   };
+}
+
+function validateEmotionBias(
+  bias: { valence: number; arousal: number } | undefined,
+  errors: string[],
+): { valence: number; arousal: number } | undefined {
+  if (bias === undefined) {
+    return undefined;
+  }
+  if (!Number.isFinite(bias.valence) || bias.valence < -1 || bias.valence > 1) {
+    errors.push("query.emotionBias.valence must be a number from -1 to 1");
+  }
+  if (!Number.isFinite(bias.arousal) || bias.arousal < 0 || bias.arousal > 1) {
+    errors.push("query.emotionBias.arousal must be a number from 0 to 1");
+  }
+  return errors.length === 0
+    ? { valence: bias.valence, arousal: bias.arousal }
+    : undefined;
 }
 
 export function assertUniqueMemoryId(existingIds: ReadonlySet<string>, id: string): void {
@@ -129,6 +156,31 @@ function validateImportance(value: number, path: string, errors: string[]): void
   if (!Number.isFinite(value) || value < MEMORY_IMPORTANCE_MIN || value > MEMORY_IMPORTANCE_MAX) {
     errors.push(`${path} must be a number from ${MEMORY_IMPORTANCE_MIN} to ${MEMORY_IMPORTANCE_MAX}`);
   }
+}
+
+function validateEmotion(value: EmotionSignature | undefined, path: string, errors: string[]): EmotionSignature | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    errors.push(`${path} must be an object with valence and arousal`);
+    return undefined;
+  }
+  if (
+    typeof value.valence !== "number" ||
+    !Number.isFinite(value.valence) ||
+    value.valence < EMOTION_VALENCE_MIN ||
+    value.valence > EMOTION_VALENCE_MAX
+  ) {
+    errors.push(`${path}.valence must be a number from ${EMOTION_VALENCE_MIN} to ${EMOTION_VALENCE_MAX}`);
+  }
+  if (
+    typeof value.arousal !== "number" ||
+    !Number.isFinite(value.arousal) ||
+    value.arousal < EMOTION_AROUSAL_MIN ||
+    value.arousal > EMOTION_AROUSAL_MAX
+  ) {
+    errors.push(`${path}.arousal must be a number from ${EMOTION_AROUSAL_MIN} to ${EMOTION_AROUSAL_MAX}`);
+  }
+  return value;
 }
 
 function normalizeStringArray(
@@ -178,7 +230,8 @@ function validateWeights(partialWeights: Partial<MemoryRetrievalWeights>, errors
     }
   }
 
-  const sum = rawWeights.relevance + rawWeights.recency + rawWeights.importance;
+  const sum =
+    rawWeights.relevance + rawWeights.recency + rawWeights.importance + (rawWeights.emotion ?? 0);
   if (!Number.isFinite(sum) || sum <= 0) {
     errors.push("query.weights must have a positive sum");
     return DEFAULT_MEMORY_RETRIEVAL_WEIGHTS;
@@ -188,5 +241,6 @@ function validateWeights(partialWeights: Partial<MemoryRetrievalWeights>, errors
     relevance: rawWeights.relevance / sum,
     recency: rawWeights.recency / sum,
     importance: rawWeights.importance / sum,
+    emotion: (rawWeights.emotion ?? 0) / sum,
   };
 }

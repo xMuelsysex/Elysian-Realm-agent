@@ -15,6 +15,7 @@ import {
   type LlmPort,
   type MemoryRecord,
 } from "@elysian/simulation-agent";
+import { buildReflectionMessages } from "../src/reflection/llmReflectionPlanner.js";
 import {
   REALM_CONVERSATION_SCHEMA_VERSION,
   type RealmConversationRequestV1,
@@ -140,6 +141,29 @@ function evidenceRecord(id: string, content: string, importance = 5): MemoryReco
     metadata: {},
   };
 }
+
+test("reflection prompt grounds the evidence in the emotional arc", () => {
+  const signed1 = { ...evidenceRecord("e1", "主人早上来看向日葵。"), createdAt: "2026-07-26T08:00:00.000Z", emotion: { valence: 0.8, arousal: 0.6 } };
+  const signed2 = { ...evidenceRecord("e2", "下雨了，有点低落。"), createdAt: "2026-07-26T20:00:00.000Z", emotion: { valence: -0.6, arousal: 0.2 } };
+  const trigger = { kind: "scheduled" as const, reason: "nightly", now: NOW, sourceIds: [AGENT_ID] };
+
+  const withArc = buildReflectionMessages(
+    { agentId: AGENT_ID, trigger, evidence: [signed2, signed1] }, // intentionally unsorted
+    3,
+    { personaName: "Elysia" },
+  );
+  assert.match(
+    withArc.user,
+    /Emotional arc across the evidence \(2 emotionally signed moments\): started strongly joyful and energized, ended heavy and low\./,
+  );
+
+  const withoutArc = buildReflectionMessages(
+    { agentId: AGENT_ID, trigger, evidence: [evidenceRecord("e1", "x")] },
+    3,
+    { personaName: "Elysia" },
+  );
+  assert.doesNotMatch(withoutArc.user, /Emotional arc/);
+});
 
 test("llm reflection planner turns evidence into validated insight writes", async () => {
   const llm = textLlm(

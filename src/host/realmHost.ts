@@ -21,9 +21,15 @@ import {
 import { executeRealmAgentStepV1 } from "../service/realmStepExecutor.js";
 import { runReflection } from "../reflection/reflectionPlanner.js";
 import { createLlmReflectionPlanner } from "../reflection/llmReflectionPlanner.js";
-import type { AgentMood } from "../affect/affectRecords.js";
+import type { AffectState, AgentMood, PlotEvent, PlotEventTarget, PlotEventType } from "../affect/affectRecords.js";
+import {
+  applyPlotEvents,
+  computeAffinityDelta,
+  createInitialAffectState,
+} from "../affect/plotRules.js";
+import type { RealmAffectProposalV1 } from "../service/realmStepV1.js";
 import { runLifeNarrative } from "./lifeNarrative.js";
-import type { RealmStateStore } from "./realmState.js";
+import type { RealmStateStore, RealmStoreStats } from "./realmState.js";
 
 const CHAT_HISTORY_WINDOW = 20;
 const NARRATIVE_CONTINUITY_WINDOW = 3;
@@ -46,6 +52,7 @@ export interface RealmAgentSummary {
   personaId: string;
   affinity: number;
   mood?: AgentMood;
+  affect?: AffectState;
   memoryCount: number;
 }
 
@@ -78,6 +85,7 @@ export class RealmHost {
   private readonly llm: () => LlmPort | undefined;
   private readonly now: () => Date;
   private chatCounter = 0;
+  private eventCounter = 0;
 
   constructor(
     state: RealmStateStore,
@@ -97,12 +105,18 @@ export class RealmHost {
       personaId: agent.personaId,
       affinity: this.state.relationship(agent.agentId)?.affinity ?? 0,
       mood: this.state.mood(agent.agentId),
+      affect: this.state.affectState(agent.agentId),
       memoryCount: this.state.memoriesFor(agent.agentId).length,
     }));
   }
 
   user(): { participantId: string; displayName: string } {
     return this.state.config.user;
+  }
+
+  /** Non-destructive store statistics for growth diagnostics. */
+  stats(): RealmStoreStats {
+    return this.state.stats(this.now().toISOString());
   }
 
   history(agentId: string, limit = 50): readonly RealmConversationTurnV1[] {
@@ -141,9 +155,89 @@ export class RealmHost {
       memories: this.state.memoriesFor(agentId),
       relationship: this.state.relationship(agentId),
       mood: this.state.mood(agentId),
+      affect: this.state.affectState(agentId),
       history: this.state.historyFor(agentId, CHAT_HISTORY_WINDOW),
       message: { messageId, content: trimmed },
     });
+
+    const applied = this.state.applyConversation(
+      agentId,
+      {
+        turns: [
+          { role: "participant", content: trimmed, at: now },
+          { role: "agent", content: response.reply.content, at: now },
+        ],
+        memoryWrites: response.memoryWrites,
+        affinityDelta: response.affect.affinityDelta,
+        mood: response.affect.mood,
+      },
+      now,
+    );
+
+    return {
+      agentId,
+      displayName: agent.displayName,
+      reply: response.reply.content,
+      affinity: applied.affinity,
+      mood: applied.mood,
+      analysis: response.affect.analysis,
+      analysisReason: response.affect.reason,
+    };
+  }
+
+  /**
+   * Streaming variant of chat(): emits reply text chunks as they arrive and
+   * resolves with the same result shape. Runners without runStream() fall
+   * back to one delta carrying the whole reply.
+   */
+  async chatStream(
+    agentId: string,
+    content: string,
+    onDelta: (text: string) => void,
+    onReply?: (text: string) => void,
+  ): Promise<RealmChatResult> {
+    const runner = this.runner();
+    if (!runner) {
+      throw new Error(
+        "no conversation llm configured; open /admin to set one up before chatting",
+      );
+    }
+    const agent = this.state.agent(agentId);
+    const trimmed = content.trim();
+    if (trimmed.length === 0) {
+      throw new Error("message content must not be empty");
+    }
+
+    const now = this.now().toISOString();
+    this.chatCounter += 1;
+    const messageId = `msg_${this.now().getTime()}_${this.chatCounter}`;
+
+    const request = {
+      schemaVersion: REALM_CONVERSATION_SCHEMA_VERSION,
+      conversationId: `chat_${agentId}`,
+      now,
+      agent: {
+        agentId: agent.agentId,
+        personaId: agent.personaId,
+        displayName: agent.displayName,
+        persona: agent.persona,
+      },
+      participant: this.state.config.user,
+      memories: this.state.memoriesFor(agentId),
+      relationship: this.state.relationship(agentId),
+      mood: this.state.mood(agentId),
+      affect: this.state.affectState(agentId),
+      history: this.state.historyFor(agentId, CHAT_HISTORY_WINDOW),
+      message: { messageId, content: trimmed },
+    };
+
+    const response = runner.runStream
+      ? await runner.runStream(request, onDelta, onReply)
+      : await runner.run(request).then((result) => {
+          onDelta(result.reply.content);
+          onReply?.(result.reply.content);
+          return result;
+        });
 
     const applied = this.state.applyConversation(
       agentId,
@@ -298,6 +392,36 @@ export class RealmHost {
     return written;
   }
 
+  /**
+   * Feed one plot event to an agent: the deterministic engine moves the
+   * emotional state (decay + event deltas) and proposes the affinity shift;
+   * the host applies both immediately and persists.
+   */
+  plotEvent(
+    agentId: string,
+    input: { type: PlotEventType; target: PlotEventTarget; intensity?: number },
+  ): AffectState {
+    this.state.agent(agentId);
+    const at = this.now().toISOString();
+    this.eventCounter += 1;
+    const intensity = Math.min(1, Math.max(0, input.intensity ?? 1));
+    const event: PlotEvent = {
+      id: `plot_${at}_${this.eventCounter}`,
+      type: input.type,
+      target: input.target,
+      intensity,
+      at,
+    };
+    const current =
+      this.state.affectState(agentId) ?? createInitialAffectState(agentId, at);
+    const proposal: RealmAffectProposalV1 = {
+      affect: applyPlotEvents(current, [event], at),
+      affinityDelta: computeAffinityDelta([event]),
+    };
+    this.state.applyAffectProposal(agentId, proposal, at);
+    return proposal.affect;
+  }
+
   private runTick(period: RealmRoutinePeriodV1, date: Date): number {
     const now = date.toISOString();
     // Millisecond timestamp keeps stepIds unique even across restarts within
@@ -331,6 +455,7 @@ export class RealmHost {
             },
           },
           memories: this.state.memoriesFor(agent.agentId),
+          affectState: this.state.affectState(agent.agentId),
         };
       })
       .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined);
@@ -349,6 +474,9 @@ export class RealmHost {
     let added = 0;
     for (const output of result.agents) {
       added += this.state.applyTickMemories(output.agentId, output.memories);
+      if (output.affectProposal) {
+        this.state.applyAffectProposal(output.agentId, output.affectProposal, now);
+      }
     }
     return added;
   }
