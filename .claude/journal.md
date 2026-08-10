@@ -1,5 +1,11 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补二：剧情脚本自动投喂（autoresearch 战役四）
+
+- affect.md 最后候选落地：realm.json 每 agent 可选 `plotScript`（period→PlotEvent 列表），宿主 tickIfPeriodChanged 在 runTick 后按 period 自动投喂（同 tick 闸门、重启安全）；默认爱莉希雅配 morning（gain+companion_joy）/evening（surprise）。角色每天有情感起伏，tick 叙事带签名反映脚本事件后的状态。+3 测试。
+- 顺带修复既有 bug：`affinityDelta × intensity` 产生小数（0.2×1=0.2）会让 STRICT INTEGER 列 relationships.affinity 崩溃（此前投喂 API 配非整数 intensity 就会触发）——storeAffinity 改为 round，clamped 语义保持 bounds-only。
+- 196 tests 全绿 + verify:e2e 12 项；fidelity 100。spec 更新 host-runtime.md（plotScript 语义）。
+
 ## 2026-08-10 二十二轮补：OOC 泄露检测 + tick 轨情感签名（autoresearch 战役二三）
 
 - 战役二 OOC 泄露检测：`src/conversation/oocGuard.ts` 纯函数 detectOocLeak（中英泄露形态：我是AI/作为语言模型/as an AI/I am an AI/游戏角色/说实话我是AI）；宿主 chat+chatStream 双路径在 analysisReason 追加 `ooc-leak:` 标注（不拦截回复，只让泄露可见）。+6 测试。
