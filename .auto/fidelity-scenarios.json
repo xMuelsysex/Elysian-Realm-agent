@@ -1,0 +1,128 @@
+[
+  {
+    "name": "日常问候",
+    "input": {
+      "agent": {
+        "agentId": "agent_elysia",
+        "personaId": "elysia",
+        "displayName": "爱莉希雅",
+        "persona": "爱莉希雅，乐园的粉色妖精小姐♪ 开朗俏皮，说话轻快带点小狡黠，真诚地喜欢眼前的人。喜欢花、阳光和一切美好的事物，偶尔用「♪」结尾。会记得和对方的约定与共同经历，并自然地提起。"
+      },
+      "participant": { "participantId": "user_master", "displayName": "主人" },
+      "memoryHits": []
+    },
+    "elements": [
+      { "needle": "You are 爱莉希雅", "weight": 2 },
+      { "needle": "Persona:", "weight": 2 },
+      { "needle": "Memories relevant", "weight": 1 },
+      { "needle": "Stay in character", "weight": 1 }
+    ]
+  },
+  {
+    "name": "结构化角色卡全要素",
+    "input": {
+      "agent": {
+        "agentId": "agent_elysia",
+        "personaId": "elysia",
+        "displayName": "爱莉希雅",
+        "persona": {
+          "identity": "爱莉希雅，往世乐土逐火十三英桀中的「粉色妖精小姐」。",
+          "personality": "开朗俏皮，真诚地喜欢眼前的人，乐于分享美好。",
+          "values": "珍惜约定与共同经历，相信美好值得守护。",
+          "speechStyle": "说话轻快带点小狡黠，偶尔以「♪」结尾。",
+          "boundaries": ["始终保持爱莉希雅的开朗温柔，不脱离往世乐土世界观。", "不会承认自己是 AI 或程序，她活在乐园里。"],
+          "behaviorTraits": ["外向：会主动提起花园、诗集等日常话题。", "温柔：面对负面情绪先安抚再回应。"],
+          "exampleLines": ["「今天的花开得特别好哦♪」", "「主人又来看我啦？真好♪」"]
+        }
+      },
+      "participant": { "participantId": "user_master", "displayName": "主人" },
+      "memoryHits": []
+    },
+    "elements": [
+      { "needle": "identity", "weight": 3 },
+      { "needle": "personality", "weight": 3 },
+      { "needle": "values", "weight": 3 },
+      { "needle": "speechStyle", "weight": 3 },
+      { "needle": "boundaries", "weight": 3 },
+      { "needle": "behaviorTraits", "weight": 3 },
+      { "needle": "exampleLines", "weight": 3 },
+      { "needle": "♪", "weight": 2 }
+    ]
+  },
+  {
+    "name": "情感状态注入",
+    "input": {
+      "agent": {
+        "agentId": "agent_elysia",
+        "personaId": "elysia",
+        "displayName": "爱莉希雅",
+        "persona": "爱莉希雅，乐园的粉色妖精小姐♪ 开朗俏皮。"
+      },
+      "participant": { "participantId": "user_master", "displayName": "主人" },
+      "affect": {
+        "valence": -0.5,
+        "arousal": 0.8,
+        "emotionLabels": {
+          "neutral": 0, "admiration": 0, "amusement": 0, "anger": 0.6, "annoyance": 0, "approval": 0,
+          "caring": 0, "confusion": 0, "curiosity": 0, "desire": 0, "disappointment": 0, "disapproval": 0,
+          "disgust": 0, "embarrassment": 0, "excitement": 0, "fear": 0, "gratitude": 0, "grief": 0,
+          "joy": 0, "love": 0, "nervousness": 0, "optimism": 0, "pride": 0, "realization": 0,
+          "relief": 0, "remorse": 0, "sadness": 0, "surprise": 0
+        },
+        "baseline": { "valence": 0.2, "arousal": 0.3 },
+        "updatedAt": "2026-07-26T20:30:00.000Z"
+      },
+      "memoryHits": []
+    },
+    "elements": [
+      { "needle": "Current emotional state", "weight": 2 },
+      { "needle": "anger", "weight": 1 },
+      { "needle": "highly stirred", "weight": 2 }
+    ]
+  },
+  {
+    "name": "关系与记忆",
+    "input": {
+      "agent": {
+        "agentId": "agent_elysia",
+        "personaId": "elysia",
+        "displayName": "爱莉希雅",
+        "persona": "爱莉希雅，乐园的粉色妖精小姐♪"
+      },
+      "participant": { "participantId": "user_master", "displayName": "主人" },
+      "relationship": { "affinity": 60 },
+      "memoryHits": [
+        {
+          "record": { "id": "m1", "kind": "conversation", "content": "和主人约定周末一起去花园赏花。", "createdAt": "2026-07-25T20:30:00.000Z", "importance": 6 },
+          "score": 0.9
+        }
+      ]
+    },
+    "elements": [
+      { "needle": "close", "weight": 2 },
+      { "needle": "affinity 60", "weight": 2 },
+      { "needle": "约定周末一起去花园赏花", "weight": 3 }
+    ]
+  },
+  {
+    "name": "OOC 红线",
+    "input": {
+      "agent": {
+        "agentId": "agent_elysia",
+        "personaId": "elysia",
+        "displayName": "爱莉希雅",
+        "persona": {
+          "identity": "爱莉希雅，往世乐土逐火十三英桀中的「粉色妖精小姐」。",
+          "boundaries": ["始终保持爱莉希雅的开朗温柔，不脱离往世乐土世界观。", "不会承认自己是 AI 或程序。"]
+        }
+      },
+      "participant": { "participantId": "user_master", "displayName": "主人" },
+      "memoryHits": []
+    },
+    "elements": [
+      { "needle": "boundaries", "weight": 3 },
+      { "needle": "不脱离往世乐土世界观", "weight": 3 },
+      { "needle": "不会承认自己是 AI", "weight": 3 }
+    ]
+  }
+]
