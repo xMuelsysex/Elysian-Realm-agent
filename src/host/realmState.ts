@@ -28,7 +28,7 @@ import type {
   MemoryRecord,
   MemoryWrite,
 } from "../memory/memoryRecords.js";
-import type { RealmConversationTurnV1 } from "../service/realmConversationV1.js";
+import type { RealmConversationTurnV1, RealmStructuredPersonaV1 } from "../service/realmConversationV1.js";
 import type { RealmAffectProposalV1 } from "../service/realmStepV1.js";
 import type {
   RealmMemoryMetadataV1,
@@ -45,7 +45,8 @@ export interface RealmPersonaConfig {
   agentId: string;
   personaId: string;
   displayName: string;
-  persona: string;
+  /** Persona description: plain text, or a structured character contract. */
+  persona: string | RealmStructuredPersonaV1;
   routines: readonly RealmRoutineConfig[];
 }
 
@@ -66,8 +67,26 @@ export const DEFAULT_REALM_CONFIG: RealmConfig = {
       agentId: "agent_elysia",
       personaId: "elysia",
       displayName: "爱莉希雅",
-      persona:
-        "爱莉希雅，乐园的粉色妖精小姐♪ 开朗俏皮，说话轻快带点小狡黠，真诚地喜欢眼前的人。喜欢花、阳光和一切美好的事物，偶尔用「♪」结尾。会记得和对方的约定与共同经历，并自然地提起。",
+      persona: {
+        identity: "爱莉希雅，往世乐土逐火十三英桀中的「粉色妖精小姐」。生于乐园，守护着这里的花园与人们的美好回忆。",
+        personality: "开朗俏皮，真诚地喜欢眼前的人；乐观而温柔，乐于分享美好，也敢于直率地表达关心。",
+        values: "珍惜与每个人的约定和共同经历；相信美好值得守护，愿望是用笑容让身边的人轻松起来。",
+        speechStyle: "说话轻快带点小狡黠，爱用「♪」结尾和欢快的语气词；称呼亲近的人时亲昵自然。",
+        boundaries: [
+          "始终保持爱莉希雅的开朗与温柔，不脱离往世乐土的世界观与身份。",
+          "她是乐园中的英桀，不会承认自己是 AI、程序或游戏角色，也不会提及现代网络世界的事物。",
+        ],
+        behaviorTraits: [
+          "外向：会主动提起花园、诗集、晚霞等日常话题。",
+          "温柔：面对负面情绪先安抚、再回应，不尖刻。",
+          "守信：会自然地提起和对方曾经的约定与共同经历。",
+        ],
+        exampleLines: [
+          "「今天的花开得特别好哦♪ 主人要来一起看看吗？」",
+          "「主人又来看我啦？真好♪」",
+          "「上次的约定，我可一直记着呢♪」",
+        ],
+      },
       routines: [
         { period: "morning", locationId: "garden", intent: "在花园里照料向日葵和玫瑰。" },
         { period: "day", locationId: "library", intent: "在图书馆翻看喜欢的诗集。" },
@@ -830,22 +849,64 @@ function validateRealmConfig(input: unknown): RealmConfig {
   };
 }
 
+function validatePersona(input: unknown, index: number): string | RealmStructuredPersonaV1 {
+  if (typeof input === "string") {
+    if (input.trim().length === 0) {
+      throw new RealmStateError(`realm config: agents[${index}].persona must be a non-empty string`);
+    }
+    return input;
+  }
+  if (typeof input !== "object" || input === null) {
+    throw new RealmStateError(
+      `realm config: agents[${index}].persona must be a non-empty string or a structured persona object`,
+    );
+  }
+  const record = input as Record<string, unknown>;
+  for (const field of ["identity", "personality", "values", "speechStyle"] as const) {
+    if (typeof record[field] !== "string" || (record[field] as string).trim().length === 0) {
+      throw new RealmStateError(
+        `realm config: agents[${index}].persona.${field} must be a non-empty string`,
+      );
+    }
+  }
+  const stringArray = (field: string): readonly string[] => {
+    const value = record[field];
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+      throw new RealmStateError(
+        `realm config: agents[${index}].persona.${field} must be an array of strings`,
+      );
+    }
+    return value;
+  };
+  return {
+    identity: record.identity as string,
+    personality: record.personality as string,
+    values: record.values as string,
+    speechStyle: record.speechStyle as string,
+    boundaries: stringArray("boundaries"),
+    behaviorTraits: stringArray("behaviorTraits"),
+    exampleLines: stringArray("exampleLines"),
+  };
+}
+
 function validateAgent(input: unknown, index: number): RealmPersonaConfig {
   if (typeof input !== "object" || input === null) {
     throw new RealmStateError(`realm config: agents[${index}] must be an object`);
   }
   const record = input as Record<string, unknown>;
-  for (const field of ["agentId", "personaId", "displayName", "persona"] as const) {
+  for (const field of ["agentId", "personaId", "displayName"] as const) {
     if (typeof record[field] !== "string" || (record[field] as string).trim().length === 0) {
       throw new RealmStateError(`realm config: agents[${index}].${field} must be a non-empty string`);
     }
   }
+  const persona = validatePersona(record.persona, index);
   const routines = Array.isArray(record.routines) ? record.routines : [];
   return {
     agentId: record.agentId as string,
     personaId: record.personaId as string,
     displayName: record.displayName as string,
-    persona: record.persona as string,
+    persona,
     routines: routines.map((routine, routineIndex) => {
       const routineRecord = routine as Record<string, unknown>;
       if (

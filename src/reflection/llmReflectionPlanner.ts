@@ -9,7 +9,8 @@
 
 import type { LlmPort, LlmRequestOptionsLike } from "../ports/ports.js";
 import { parseLlmJson, truncate } from "../llm/llmJson.js";
-import { describeEmotion } from "../conversation/conversationPrompt.js";
+import { describeEmotion, personaSections } from "../conversation/conversationPrompt.js";
+import type { RealmStructuredPersonaV1 } from "../service/realmConversationV1.js";
 import type { MemoryRecord } from "../memory/memoryRecords.js";
 import type {
   ReflectionInput,
@@ -21,7 +22,7 @@ import type {
 export interface LlmReflectionPlannerOptions {
   /** Shown to the model so insights stay in the persona's voice. */
   personaName?: string;
-  persona?: string;
+  persona?: string | RealmStructuredPersonaV1;
   maxInsights?: number;
 }
 
@@ -82,7 +83,7 @@ export function buildReflectionMessages<EvidenceMetadata>(
   return {
     system: [
       `You are the inner voice of ${name}, a character reflecting on recent experiences before rest.`,
-      ...(options.persona ? [`Persona:\n${options.persona}`] : []),
+      ...(options.persona ? personaSections(options.persona) : []),
       "From the evidence memories, produce reflective insights. Look for:",
       "- recurring patterns (things that keep happening or that you keep doing);",
       "- emotional developments (how feelings about people or places are shifting);",

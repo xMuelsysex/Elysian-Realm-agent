@@ -8,6 +8,7 @@ import type { EmotionSignature, MemoryRetrievalHit } from "../memory/memoryRecor
 import type {
   RealmConversationAgentV1,
   RealmConversationParticipantV1,
+  RealmStructuredPersonaV1,
 } from "../service/realmConversationV1.js";
 
 export interface ConversationPromptInput<Metadata = Record<string, unknown>> {
@@ -124,6 +125,36 @@ export function affectExpressionGuidance(affect: AffectState): readonly string[]
   return guidance;
 }
 
+/**
+ * Render a structured character contract into ordered prompt sections.
+ * A plain-text persona keeps the legacy single-section shape.
+ */
+export function personaSections(persona: string | RealmStructuredPersonaV1): string[] {
+  if (typeof persona === "string") {
+    return [`Persona:\n${persona}`];
+  }
+  const sections: string[] = [
+    `Identity:\n${persona.identity}`,
+    `Personality:\n${persona.personality}`,
+    `Values:\n${persona.values}`,
+    `Speech style:\n${persona.speechStyle}`,
+  ];
+  // Optional arrays per the validation contract: absent means empty.
+  const boundaries = persona.boundaries ?? [];
+  const behaviorTraits = persona.behaviorTraits ?? [];
+  const exampleLines = persona.exampleLines ?? [];
+  if (boundaries.length > 0) {
+    sections.push(`Character boundaries (never break these):\n${boundaries.map((line) => `- ${line}`).join("\n")}`);
+  }
+  if (behaviorTraits.length > 0) {
+    sections.push(`Behavior tendencies:\n${behaviorTraits.map((line) => `- ${line}`).join("\n")}`);
+  }
+  if (exampleLines.length > 0) {
+    sections.push(`Speech examples (match this voice):\n${exampleLines.map((line) => `- ${line}`).join("\n")}`);
+  }
+  return sections;
+}
+
 export function buildConversationSystemPrompt<Metadata>(
   input: ConversationPromptInput<Metadata>,
 ): string {
@@ -131,7 +162,7 @@ export function buildConversationSystemPrompt<Metadata>(
 
   const sections: string[] = [
     `You are ${agent.displayName} (persona ${agent.personaId}), a character living in the Elysian Realm simulation.`,
-    `Persona:\n${agent.persona}`,
+    ...personaSections(agent.persona),
   ];
 
   if (now !== undefined) {

@@ -7,6 +7,8 @@
 
 import type { LlmPort, LlmRequestOptionsLike } from "../ports/ports.js";
 import type { MemoryWrite } from "../memory/memoryRecords.js";
+import { personaSections } from "../conversation/conversationPrompt.js";
+import type { RealmStructuredPersonaV1 } from "../service/realmConversationV1.js";
 import type { RealmMemoryMetadataV1, RealmRoutinePeriodV1 } from "../service/realmStepV1.js";
 
 export const LIFE_NARRATIVE_IMPORTANCE = 4;
@@ -14,7 +16,7 @@ export const LIFE_NARRATIVE_IMPORTANCE = 4;
 export interface LifeNarrativeInput {
   agentId: string;
   displayName: string;
-  persona: string;
+  persona: string | RealmStructuredPersonaV1;
   period: RealmRoutinePeriodV1;
   locationId: string;
   intent: string;
@@ -30,7 +32,7 @@ export function buildLifeNarrativeMessages(input: LifeNarrativeInput): {
   return {
     system: [
       `You write one tiny diary moment in the voice of ${input.displayName}.`,
-      `Persona:\n${input.persona}`,
+      ...personaSections(input.persona),
       "Rules:",
       "- 1-2 sentences, first person, in the persona's own language.",
       "- Ground it in the given activity and place, but invent one small, concrete, sensory detail or micro-event (something noticed, a tiny surprise, a passing feeling).",

@@ -3,8 +3,13 @@ set -euo pipefail
 
 # 角色保真度评分：对固定场景构造 system prompt，检查注入要素完整度。
 # 场景与要素清单固定于 .auto/fidelity-scenarios.json（measure 只读，防实现过拟合）。
+# 顺序：先 npm test（含 build，保证 dist 新鲜），再评分。
 
 cd "$(dirname "$0")/.."
+
+TEST_OUT=$(npm test 2>&1 || true)
+TESTS=$(printf '%s\n' "$TEST_OUT" | grep -oE 'pass [0-9]+' | grep -oE '[0-9]+' | tail -1 || true)
+echo "METRIC tests=${TESTS:-0}"
 
 node --input-type=module -e '
 import { readFileSync } from "node:fs";
@@ -27,8 +32,3 @@ const score = total === 0 ? 0 : Math.round((earned / total) * 100);
 console.log(`METRIC character_fidelity=${score}`);
 console.log(`METRIC prompt_bytes=${bytes}`);
 ' 2>&1
-
-# 测试计数（副指标）：统计 npm test 输出 pass 数量（node --test 格式 `ℹ pass N`）
-TEST_OUT=$(npm test 2>&1 || true)
-TESTS=$(printf '%s\n' "$TEST_OUT" | grep -oE 'pass [0-9]+' | grep -oE '[0-9]+' | tail -1 || true)
-echo "METRIC tests=${TESTS:-0}"

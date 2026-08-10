@@ -22,6 +22,7 @@ import {
   type RealmConversationRequestV1,
   type RealmConversationResponseV1,
   type RealmConversationTurnV1,
+  type RealmStructuredPersonaV1,
 } from "./realmConversationV1.js";
 import type { RealmMemoryRecordV1 } from "./realmStepV1.js";
 
@@ -92,7 +93,41 @@ function validateAgent(input: unknown): RealmConversationAgentV1 {
     agentId: requireString(input.agentId, "agent.agentId"),
     personaId: requireString(input.personaId, "agent.personaId"),
     displayName: requireString(input.displayName, "agent.displayName"),
-    persona: requireString(input.persona, "agent.persona"),
+    persona: validatePersona(input.persona),
+  };
+}
+
+function validatePersona(input: unknown): string | RealmStructuredPersonaV1 {
+  if (typeof input === "string") {
+    if (input.trim().length === 0) {
+      throw new RealmConversationValidationError("agent.persona must be a non-empty string or structured persona");
+    }
+    return input;
+  }
+  if (!isRecord(input)) {
+    throw new RealmConversationValidationError("agent.persona must be a non-empty string or structured persona");
+  }
+  for (const field of ["identity", "personality", "values", "speechStyle"] as const) {
+    if (typeof input[field] !== "string" || (input[field] as string).trim().length === 0) {
+      throw new RealmConversationValidationError(`agent.persona.${field} must be a non-empty string`);
+    }
+  }
+  const stringArray = (field: string): readonly string[] => {
+    const value = input[field];
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+      throw new RealmConversationValidationError(`agent.persona.${field} must be an array of strings`);
+    }
+    return value;
+  };
+  return {
+    identity: input.identity as string,
+    personality: input.personality as string,
+    values: input.values as string,
+    speechStyle: input.speechStyle as string,
+    boundaries: stringArray("boundaries"),
+    behaviorTraits: stringArray("behaviorTraits"),
+    exampleLines: stringArray("exampleLines"),
   };
 }
 

@@ -14,12 +14,34 @@ export const REALM_CONVERSATION_SCHEMA_VERSION = "realm-conversation.v1" as cons
 /** Default retrieval depth for conversation memory injection. */
 export const DEFAULT_CONVERSATION_MEMORY_TOP_K = 5;
 
+/**
+ * Structured character contract, borrowed from the field-organization of
+ * SillyTavern character-card-spec and CharacterGLM's layered persona: each
+ * facet keeps a single source of truth and gets its own prompt section.
+ */
+export interface RealmStructuredPersonaV1 {
+  /** Who the character is: name, origin, canonical facts. */
+  identity: string;
+  /** Stable personality traits. */
+  personality: string;
+  /** What the character holds dear; drives stance and reactions. */
+  values: string;
+  /** Speech habits: catchphrases, sentence rhythm, address style. */
+  speechStyle: string;
+  /** Out-of-character red lines; the character must never cross these. */
+  boundaries: readonly string[];
+  /** Stable behavior tendencies that steer tone and initiative. */
+  behaviorTraits: readonly string[];
+  /** A few in-voice sample lines anchoring the style (few-shot). */
+  exampleLines: readonly string[];
+}
+
 export interface RealmConversationAgentV1 {
   agentId: string;
   personaId: string;
   displayName: string;
-  /** Persona description injected into the system prompt. */
-  persona: string;
+  /** Persona description: plain text, or a structured character contract. */
+  persona: string | RealmStructuredPersonaV1;
 }
 
 export interface RealmConversationParticipantV1 {
