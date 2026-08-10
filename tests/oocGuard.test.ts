@@ -967,3 +967,59 @@ test("plotScript days validation rejects out-of-range weekdays", async () => {
   );
   assert.throws(() => new RealmStateStore(dir), /days must be an array of 0\.\.6 weekdays/);
 });
+
+// ── 剧情经历记忆化 ───────────────────────────────────────────────────────
+
+test("plot events write retrievable experience memories", async () => {
+  const state = new RealmStateStore(tempDataDir());
+  const host = new RealmHost(state, () => undefined, {
+    now: () => new Date(2026, 7, 8, 9, 0, 0),
+  });
+
+  host.plotEvent(AGENT_ID, { type: "praise", target: "host", intensity: 0.8 });
+  const memories = state.memoriesFor(AGENT_ID).filter((record) => record.tags.includes("plot-event"));
+  assert.equal(memories.length, 1, "plot event writes one experience memory");
+  assert.equal(memories[0].kind, "observation");
+  assert.match(memories[0].content, /今天和主人之间发生了一件夸赞的事/);
+  assert.equal(memories[0].importance, 3);
+  assert.equal(memories[0].metadata.plotType, "praise");
+
+  // A second event appends another experience memory.
+  host.plotEvent(AGENT_ID, { type: "gain", target: "self" });
+  const after = state.memoriesFor(AGENT_ID).filter((record) => record.tags.includes("plot-event"));
+  assert.equal(after.length, 2);
+  assert.match(after[1].content, /今天经历了一件获得的事/);
+});
+
+test("scripted plot events also become experience memories", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-plotmem-script-"));
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人" },
+      agents: [
+        {
+          agentId: AGENT_ID,
+          personaId: "elysia",
+          displayName: "爱莉希雅",
+          persona: "p",
+          routines: [{ period: "morning", locationId: "garden", intent: "照料花" }],
+          plotScript: [
+            {
+              period: "morning",
+              events: [{ type: "gain", target: "self", intensity: 0.3 }],
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  const state = new RealmStateStore(dir);
+  const host = new RealmHost(state, () => undefined, {
+    now: () => new Date(2026, 6, 26, 9, 0, 0),
+  });
+  await host.tickIfPeriodChanged();
+  const memories = state.memoriesFor(AGENT_ID).filter((record) => record.tags.includes("plot-event"));
+  assert.equal(memories.length, 1, "scripted plot writes an experience memory");
+  assert.match(memories[0].content, /经历了一件获得的事/);
+});

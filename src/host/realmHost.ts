@@ -30,6 +30,7 @@ import {
   CONVERSATION_EMOTION_BLEND_RATE,
   createInitialAffectState,
 } from "../affect/plotRules.js";
+import { PLOT_EVENT_LABELS } from "../affect/affectRecords.js";
 import type { RealmAffectProposalV1 } from "../service/realmStepV1.js";
 import { runLifeNarrative } from "./lifeNarrative.js";
 import { detectOocLeak } from "../conversation/oocGuard.js";
@@ -37,6 +38,7 @@ import type { RealmRoutineConfig, RealmStateStore, RealmStoreStats, RealmPersona
 
 const CHAT_HISTORY_WINDOW = 20;
 const RELATIONSHIP_HISTORY_WINDOW = 20;
+const PLOT_EVENT_MEMORY_IMPORTANCE = 3;
 const NARRATIVE_CONTINUITY_WINDOW = 3;
 const REFLECTION_EVIDENCE_LIMIT = 12;
 
@@ -510,7 +512,39 @@ export class RealmHost {
       affinityDelta: computeAffinityDelta([event], personaAffectModifiers(this.state.agent(agentId))),
     };
     this.state.applyAffectProposal(agentId, proposal, at);
+    // The event becomes part of the character's life: a retrievable memory so
+    // later conversations can naturally reference it (experience → memory →
+    // mention). Manual feeds and scripted plots share this path.
+    this.state.applyMemoryWrites(agentId, [
+      {
+        id: `plotmem_${at}_${this.eventCounter}`,
+        kind: "observation",
+        content: this.plotExperienceLine(event),
+        createdAt: at,
+        importance: PLOT_EVENT_MEMORY_IMPORTANCE,
+        sourceIds: [event.id],
+        visibility: "private",
+        tags: [agentId, "plot-event"],
+        metadata: {
+          source: "engine",
+          plotType: event.type,
+          plotTarget: event.target,
+        },
+      },
+    ]);
     return proposal.affect;
+  }
+
+  /** A natural first-person line describing a plot event as an experience. */
+  private plotExperienceLine(event: PlotEvent): string {
+    const label = PLOT_EVENT_LABELS[event.type];
+    if (event.target === "host") {
+      return `今天和${this.state.config.user.displayName}之间发生了一件${label}的事。`;
+    }
+    if (event.target === "self") {
+      return `今天经历了一件${label}的事。`;
+    }
+    return `今天在乐园里经历了一件${label}的事。`;
   }
 
   /**

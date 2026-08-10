@@ -56,6 +56,9 @@ export interface RealmMemoryMetadataV1 {
   reviewedBy?: string;
   proposalAction?: string;
   triggerKind?: string;
+  /** Present on plot-experience memories. */
+  plotType?: string;
+  plotTarget?: string;
   reflectionSource?: "deterministic";
   conversationId?: string;
   messageId?: string;
