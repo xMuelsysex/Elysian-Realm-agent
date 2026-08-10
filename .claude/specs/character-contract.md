@@ -21,6 +21,7 @@
 - `persona` 字段类型统一为 `string | RealmStructuredPersonaV1`（realm.json 配置、RealmConversationAgentV1、LifeNarrativeInput、LlmReflectionPlannerOptions）。
 - 渲染单一事实来源：`personaSections()`（src/conversation/conversationPrompt.ts 导出）——字符串 → 旧式单节 `Persona:\n...`；结构化 → Identity/Personality/Values/Speech style 四节 + 可选 Character boundaries（红线）/Behavior tendencies/Speech examples 三节。**三个数组必须 `?? []` 容错**（校验器允许缺省，渲染函数要匹配该语义，勿假设数组必在）。
 - 消费点：对话 system prompt、life narrative（tick 日记）、夜间反思——三处共用 personaSections，不各自拼装。
+- 叙事情感注入：lifeNarrative 接受 `affect`，把 `describeAffectState` 描述注入日记 prompt 的 user 消息；同一快照同时作为记忆 emotion 签名。
 
 ## 校验规则
 

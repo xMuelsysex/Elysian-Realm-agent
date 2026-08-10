@@ -1,5 +1,11 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补四：多角色度量 + 叙事情感注入（autoresearch 战役六七）
+
+- measure 新增梅比乌斯差异化场景（9 needle：身份/逐火之蛾/科学家/红线/风格/示例句）全 HIT——多角色契约注入验证，fidelity 保持 100，度量面覆盖双角色。
+- 叙事情感注入：lifeNarrative prompt 注入 describeAffectState 当前情感描述（"Your current emotional state: tense and unsettled; anger (0.60)"），同一 affect 快照同时用于日记 prompt 与记忆 emotion 签名——tick 日记情绪贴合角色心境。+1 测试。
+- 199 tests 全绿。
+
 ## 2026-08-10 二十二轮补三：角色化性情基线（autoresearch 战役五）
 
 - persona 卡新增可选 `baseline {valence, arousal}`（ACT fundamental sentiments 人因而异）：宿主 tick 首轮 ensureAffectInitialized 用角色基线初始化 affect（此前所有角色共用默认 0.2/0.3），plotEvent 创建也传角色基线；衰减回归目标现在因人而异。爱莉希雅 {0.35,0.4} 开朗、梅比乌斯 {0,0.2} 冷静。

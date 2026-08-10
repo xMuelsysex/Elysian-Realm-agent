@@ -51,5 +51,8 @@
 - **OOC 泄露检测** ✅：src/conversation/oocGuard.ts 纯函数 detectOocLeak（中英泄露形态），宿主 chat/chatStream 双路径 analysisReason 追加 ooc-leak 标注（不拦截，只让泄露可见）。
 - **tick 轨情感签名** ✅：runLifeNarrative 接受 emotion，宿主 runNarratives 把当前 affect 快照打进 narrative 记忆——tick/对话两轨都带情感签名。
 - **剧情脚本** ✅（affect.md 最后候选）：realm.json plotScript 按 period 自动投喂 PlotEvent；修复 affinity 小数×INTEGER 列崩溃 bug（storeAffinity round）。
-- **测试**：characterContract.test.ts 10 条 + oocGuard.test.ts 9 条。196 tests 全绿；verify:e2e 12 项 PASS。
-- 死路/教训：measure needle 须匹配 prompt 实际输出（节标题/内容），匹配内部字段名永远 MISS；校验器重建对象非引用相等（deepEqual）；默认配置形态变化会破坏依赖默认配置的测试（改为与 config 一致的健壮断言）；OOC 模式需覆盖「作为语言模型」「I am an AI」形态。
+- **角色化性情基线** ✅：persona.baseline 可选（ACT 人因而异），tick 首轮用角色基线初始化 affect（爱莉希雅 {0.35,0.4} 开朗 / 梅比乌斯 {0,0.2} 冷静），衰减回归目标因人而异；双校验器限 valence -1..1/arousal 0..1。
+- **叙事情感注入** ✅：lifeNarrative prompt 注入当前情感描述，同一 affect 快照做 prompt + 记忆签名——tick 日记情绪贴合角色心境。
+- **多角色度量** ✅：measure 新增梅比乌斯场景（9 needle 全 HIT），fidelity 覆盖双角色防退化。
+- **测试**：199 tests 全绿；verify:e2e 12 项 PASS。
+- 死路/教训：measure needle 须匹配 prompt 实际输出（节标题/内容），匹配内部字段名永远 MISS；校验器重建对象非引用相等（deepEqual）；默认配置形态变化会破坏依赖默认配置的测试（改为与 config 一致的健壮断言）；OOC 模式需覆盖「作为语言模型」「I am an AI」形态；衰减只在有 routine 的 agent 上应用（executor 过滤），回归测试需配全天 routine；edit 大块替换吞闭包段会 TS1005。
