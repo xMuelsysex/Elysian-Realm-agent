@@ -25,6 +25,7 @@ import type { AffectState, AgentMood, PlotEvent, PlotEventTarget, PlotEventType 
 import { AFFECT_DEFAULT_BASELINE } from "../affect/affectRecords.js";
 import {
   applyPlotEvents,
+  blendConversationEmotion,
   computeAffinityDelta,
   createInitialAffectState,
 } from "../affect/plotRules.js";
@@ -191,6 +192,7 @@ export class RealmHost {
       },
       now,
     );
+    this.applyConversationEmotion(agentId, response.affect.emotion, now);
 
     return {
       agentId,
@@ -270,6 +272,7 @@ export class RealmHost {
       },
       now,
     );
+    this.applyConversationEmotion(agentId, response.affect.emotion, now);
 
     return {
       agentId,
@@ -464,6 +467,32 @@ export class RealmHost {
         );
       }
     }
+  }
+
+  /**
+   * Conversation emotional feedback: nudge the affect snapshot toward the
+   * exchange's emotional signature (small weight), so feelings carry inertia
+   * between turns while plot events stay dominant. No-op without a signature.
+   */
+  private applyConversationEmotion(
+    agentId: string,
+    emotion: { valence: number; arousal: number } | undefined,
+    now: string,
+  ): void {
+    if (emotion === undefined) {
+      return;
+    }
+    const agent = this.state.agent(agentId);
+    const current =
+      this.state.affectState(agentId) ?? createInitialAffectState(agentId, now, personaBaseline(agent));
+    this.state.applyAffectProposal(
+      agentId,
+      {
+        affect: blendConversationEmotion(current, emotion, now),
+        affinityDelta: 0,
+      },
+      now,
+    );
   }
 
   /** Feed each agent's scripted plot events for this period, if configured. */

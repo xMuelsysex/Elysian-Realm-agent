@@ -224,6 +224,36 @@ export function emptyLabelStrengths(): AffectLabelStrengths {
   return labels;
 }
 
-function clampNumber(value: number, min: number, max: number): number {
+export function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * Conversation emotional feedback: nudge the affect snapshot toward the
+ * exchange's emotional signature at a small weight, so feelings carry
+ * inertia between turns while plot events stay dominant. Pure and
+ * deterministic; labels are untouched (signatures carry no labels).
+ */
+export const CONVERSATION_EMOTION_BLEND_RATE = 0.1;
+
+export function blendConversationEmotion(
+  state: AffectState,
+  emotion: { valence: number; arousal: number },
+  at: string,
+): AffectState {
+  const rate = CONVERSATION_EMOTION_BLEND_RATE;
+  return {
+    ...state,
+    valence: clampNumber(
+      state.valence + (emotion.valence - state.valence) * rate,
+      AFFECT_VALENCE_MIN,
+      AFFECT_VALENCE_MAX,
+    ),
+    arousal: clampNumber(
+      state.arousal + (emotion.arousal - state.arousal) * rate,
+      AFFECT_AROUSAL_MIN,
+      AFFECT_AROUSAL_MAX,
+    ),
+    updatedAt: at,
+  };
 }

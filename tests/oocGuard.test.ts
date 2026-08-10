@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { detectOocLeak } from "../src/conversation/oocGuard.js";
+import { blendConversationEmotion } from "../src/affect/plotRules.js";
+import { createInitialAffectState } from "../src/affect/plotRules.js";
 import { RealmHost } from "../src/host/realmHost.js";
 import { RealmStateStore } from "../src/host/realmState.js";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -251,4 +253,80 @@ test("persona baseline validation rejects out-of-range values", async () => {
     }),
   );
   assert.throws(() => new RealmStateStore(dir), /baseline needs valence -1\.\.1 and arousal 0\.\.1/);
+});
+
+// ── 对话情感闭环：宿主低权重逼近 AffectState ────────────────────────────
+
+test("blendConversationEmotion nudges valence and arousal at a small weight", () => {
+  const base = createInitialAffectState(AGENT_ID, "2026-07-26T10:00:00.000Z", { valence: 0, arousal: 0.3 });
+  const blended = blendConversationEmotion(base, { valence: 0.8, arousal: 0.9 }, "2026-07-26T10:01:00.000Z");
+  assert.ok(Math.abs(blended.valence - 0.08) < 1e-9, "0.1 weight toward the signature");
+  assert.ok(Math.abs(blended.arousal - (0.3 + 0.06)) < 1e-9);
+  assert.equal(blended.baseline.valence, 0, "baseline untouched");
+  assert.equal(blended.emotionLabels.anger, 0, "labels untouched");
+});
+
+test("blendConversationEmotion clamps at the affect bounds", () => {
+  const high = createInitialAffectState(AGENT_ID, "2026-07-26T10:00:00.000Z", { valence: 0.9, arousal: 1 });
+  const blended = blendConversationEmotion(high, { valence: -1, arousal: 0 }, "2026-07-26T10:01:00.000Z");
+  assert.equal(blended.valence, 0.9 - 0.19, "moves 10% toward -1");
+  assert.equal(blended.arousal, 0.9, "moves 10% toward 0 from 1");
+});
+
+test("host chat applies conversation emotion to the affect state", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-chatemotion-"));
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人" },
+      agents: [
+        { agentId: AGENT_ID, personaId: "elysia", displayName: "爱莉希雅", persona: "p", routines: [] },
+      ],
+    }),
+  );
+  const state = new RealmStateStore(dir);
+  // Pre-seed an affect state so the blend has a base.
+  let clock = new Date(2026, 6, 26, 9, 0, 0);
+  const host = new RealmHost(state, () => undefined, { now: () => clock });
+  await host.tickIfPeriodChanged();
+  const before = state.affectState(AGENT_ID);
+  assert.ok(before);
+  assert.equal(before.valence, 0.2, "default baseline");
+
+  const emotionRunner = {
+    runner: {
+      async run() {
+        return {
+          schemaVersion: "realm-conversation.v1" as const,
+          conversationId: "c1",
+          agentId: AGENT_ID,
+          reply: { content: "好开心呀♪" },
+          affect: {
+            analysis: "llm" as const,
+            reason: "开心的交流",
+            emotion: { valence: 0.9, arousal: 0.8 },
+          },
+          memoryWrites: [],
+        };
+      },
+    },
+  };
+  const host2 = new RealmHost(state, () => emotionRunner.runner, { now: () => clock });
+  await host2.chat(AGENT_ID, "给你讲个笑话");
+  const after = state.affectState(AGENT_ID);
+  assert.ok(after);
+  assert.ok(after.valence > before.valence, "happy chat nudges valence up");
+  assert.ok(after.valence < 0.9, "but only by the small blend weight");
+});
+
+test("host chat without an emotion signature leaves affect untouched", async () => {
+  const state = new RealmStateStore(tempDataDir());
+  let clock = new Date(2026, 6, 26, 9, 0, 0);
+  const host = new RealmHost(state, () => fakeRunner("你好呀").runner, { now: () => clock });
+  await host.tickIfPeriodChanged();
+  const before = state.affectState(AGENT_ID);
+  assert.ok(before);
+  await host.chat(AGENT_ID, "你好");
+  const after = state.affectState(AGENT_ID);
+  assert.deepEqual(after, before, "fake runner carries no emotion signature");
 });
