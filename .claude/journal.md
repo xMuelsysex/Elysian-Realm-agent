@@ -1,5 +1,9 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补十八：经历记忆→对话召回闭环验证（autoresearch 战役二十四）
+
+- 集成测试验证：投喂 praise → 经历记忆写入 → 检索「今天发生了什么好事吗？」topK 3 命中 plot-event 记忆——「经历→记忆→对话提及」闭环真实有效（CJK 二元组检索）。234 tests 全绿。
+
 ## 2026-08-10 二十二轮补十七：剧情经历记忆化（autoresearch 战役二十三）
 
 - plotEvent 写经历记忆：observation 记忆按 target 三模板（「今天和主人之间发生了一件夸赞的事」），PLOT_EVENT_LABELS 中文标签，importance 3，tags plot-event，metadata plotType/plotTarget；手动投喂与剧情脚本共享路径。角色「经历→记忆→对话可提及」闭环闭合。RealmMemoryMetadataV1 加 plotType/plotTarget。+2 测试。233 tests 全绿 + verify:e2e 14 项。
