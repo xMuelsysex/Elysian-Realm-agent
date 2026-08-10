@@ -39,14 +39,18 @@
       "memoryHits": []
     },
     "elements": [
-      { "needle": "Identity:", "weight": 3 },
-      { "needle": "Personality:", "weight": 3 },
-      { "needle": "Values:", "weight": 3 },
-      { "needle": "Speech style:", "weight": 3 },
-      { "needle": "Character boundaries (never break these):", "weight": 3 },
-      { "needle": "Behavior tendencies:", "weight": 3 },
-      { "needle": "Speech examples (match this voice):", "weight": 3 },
-      { "needle": "♪", "weight": 2 }
+      { "needle": "Identity:", "weight": 2 },
+      { "needle": "粉色妖精小姐", "weight": 2 },
+      { "needle": "Personality:", "weight": 2 },
+      { "needle": "开朗俏皮", "weight": 1 },
+      { "needle": "Values:", "weight": 2 },
+      { "needle": "Speech style:", "weight": 2 },
+      { "needle": "Character boundaries (never break these):", "weight": 2 },
+      { "needle": "不脱离往世乐土世界观", "weight": 2 },
+      { "needle": "Behavior tendencies:", "weight": 2 },
+      { "needle": "主动提起花园", "weight": 2 },
+      { "needle": "Speech examples (match this voice):", "weight": 2 },
+      { "needle": "♪", "weight": 1 }
     ]
   },
   {
