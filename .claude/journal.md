@@ -1,5 +1,12 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补三：角色化性情基线（autoresearch 战役五）
+
+- persona 卡新增可选 `baseline {valence, arousal}`（ACT fundamental sentiments 人因而异）：宿主 tick 首轮 ensureAffectInitialized 用角色基线初始化 affect（此前所有角色共用默认 0.2/0.3），plotEvent 创建也传角色基线；衰减回归目标现在因人而异。爱莉希雅 {0.35,0.4} 开朗、梅比乌斯 {0,0.2} 冷静。
+- 双校验器（realmState/conversationExecutor）限 valence -1..1、arousal 0..1。+3 测试（初始化锚定/事件后向角色基线回归/越界拒绝）。198 tests 全绿 + verify:e2e 12 项。
+- 坑：衰减只在有 routine 的 agent 上应用（executor 按 period 过滤），测试需配全天 routine 才能验证回归；edit 工具大块替换吞闭包段会 TS1005。
+- 设计变化：tick 首轮现在保证所有 agent 都有 affect 状态（性情底色），不再是 undefined。
+
 ## 2026-08-10 二十二轮补二：剧情脚本自动投喂（autoresearch 战役四）
 
 - affect.md 最后候选落地：realm.json 每 agent 可选 `plotScript`（period→PlotEvent 列表），宿主 tickIfPeriodChanged 在 runTick 后按 period 自动投喂（同 tick 闸门、重启安全）；默认爱莉希雅配 morning（gain+companion_joy）/evening（surprise）。角色每天有情感起伏，tick 叙事带签名反映脚本事件后的状态。+3 测试。

@@ -17,7 +17,7 @@
 
 ## 契约
 
-- `RealmStructuredPersonaV1`：`{identity, personality, values, speechStyle, boundaries[], behaviorTraits[], exampleLines[]}`；必填四字段（identity/personality/values/speechStyle）为非空字符串，三个数组可选（校验器对 undefined 默认 `[]`）。
+- `RealmStructuredPersonaV1`：`{identity, personality, values, speechStyle, boundaries[], behaviorTraits[], exampleLines[], baseline?}`；必填四字段（identity/personality/values/speechStyle）为非空字符串，三个数组可选（校验器对 undefined 默认 `[]`），`baseline {valence, arousal}` 可选（valence -1..1、arousal 0..1，越界拒写）。
 - `persona` 字段类型统一为 `string | RealmStructuredPersonaV1`（realm.json 配置、RealmConversationAgentV1、LifeNarrativeInput、LlmReflectionPlannerOptions）。
 - 渲染单一事实来源：`personaSections()`（src/conversation/conversationPrompt.ts 导出）——字符串 → 旧式单节 `Persona:\n...`；结构化 → Identity/Personality/Values/Speech style 四节 + 可选 Character boundaries（红线）/Behavior tendencies/Speech examples 三节。**三个数组必须 `?? []` 容错**（校验器允许缺省，渲染函数要匹配该语义，勿假设数组必在）。
 - 消费点：对话 system prompt、life narrative（tick 日记）、夜间反思——三处共用 personaSections，不各自拼装。
