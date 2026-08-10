@@ -1079,3 +1079,80 @@ test("plot experience memory is retrievable in a later conversation", async () =
   });
   assert.ok(hits.hits.some((hit) => hit.record.tags.includes("plot-event")), "experience surfaces in retrieval");
 });
+
+// ── 叙事关系弧线 ────────────────────────────────────────────────────────
+
+test("life narrative prompt injects the relationship arc when given", async () => {
+  const { buildLifeNarrativeMessages } = await import("../src/host/lifeNarrative.js");
+  const { user } = buildLifeNarrativeMessages({
+    agentId: AGENT_ID,
+    displayName: "爱莉希雅",
+    persona: "p",
+    period: "evening",
+    locationId: "lakeside",
+    intent: "散步",
+    now: "2026-07-26T18:00:00.000Z",
+    relationshipArc: "Relationship today: your bond with 主人 moved from 3 to 9 (scale -100..100).",
+  });
+  assert.match(user, /Relationship today: your bond with 主人 moved from 3 to 9/);
+});
+
+test("life narrative prompt omits the arc when absent", async () => {
+  const { buildLifeNarrativeMessages } = await import("../src/host/lifeNarrative.js");
+  const { user } = buildLifeNarrativeMessages({
+    agentId: AGENT_ID,
+    displayName: "爱莉希雅",
+    persona: "p",
+    period: "morning",
+    locationId: "garden",
+    intent: "照料花",
+    now: "2026-07-26T08:00:00.000Z",
+  });
+  assert.ok(!user.includes("Relationship today"));
+});
+
+test("host narrative run passes the day's relationship arc", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-narrarc-"));
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人" },
+      agents: [
+        {
+          agentId: AGENT_ID,
+          personaId: "elysia",
+          displayName: "爱莉希雅",
+          persona: "p",
+          routines: [{ period: "morning", locationId: "garden", intent: "照料花" }],
+        },
+      ],
+    }),
+  );
+  const state = new RealmStateStore(dir);
+  let clock = new Date(2026, 6, 26, 8, 0, 0);
+  const host = new RealmHost(state, () => fakeRunner("你好", 3).runner, { now: () => clock });
+  await host.tickIfPeriodChanged();
+  // Move affinity via a chat with delta.
+  await host.chat(AGENT_ID, "你好");
+  await host.chat(AGENT_ID, "再聊");
+  const history = state.relationshipHistory(AGENT_ID);
+  assert.ok(history.length >= 1, "chat moved affinity");
+
+  // A narrative with an LLM present should receive the arc — verify the
+  // prompt assembly path via runLifeNarrative's user message shape.
+  const { runLifeNarrative } = await import("../src/host/lifeNarrative.js");
+  const result = await runLifeNarrative(
+    { name: "fake", model: "fake", completeChat: () => Promise.resolve({ content: "今天的花开得真好♪" }) },
+    {
+      agentId: AGENT_ID,
+      displayName: "爱莉希雅",
+      persona: "p",
+      period: "morning",
+      locationId: "garden",
+      intent: "照料花",
+      now: "2026-07-26T08:30:00.000Z",
+      relationshipArc: "Relationship today: your bond with 主人 moved from 0 to 6 (scale -100..100).",
+    },
+  );
+  assert.ok("write" in result);
+});

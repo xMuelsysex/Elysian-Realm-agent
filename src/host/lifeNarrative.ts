@@ -28,6 +28,8 @@ export interface LifeNarrativeInput {
   emotion?: EmotionSignature;
   /** Current affect snapshot; injected so the diary matches the mood. */
   affect?: AffectState;
+  /** One-line relationship trajectory for the day, when it moved. */
+  relationshipArc?: string;
 }
 
 export function buildLifeNarrativeMessages(input: LifeNarrativeInput): {
@@ -49,6 +51,7 @@ export function buildLifeNarrativeMessages(input: LifeNarrativeInput): {
       ...(input.affect !== undefined
         ? [`Your current emotional state: ${describeAffectState(input.affect)}.`]
         : []),
+      ...(input.relationshipArc !== undefined ? [input.relationshipArc] : []),
       ...(input.recentNarratives && input.recentNarratives.length > 0
         ? ["Recent moments:", ...input.recentNarratives.map((entry) => `- ${entry}`)]
         : []),

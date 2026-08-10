@@ -392,6 +392,13 @@ export class RealmHost {
       // tick track also carries an emotional signature (affect.md candidate),
       // and inject it into the diary prompt so the mood colors the writing.
       const affect = this.state.affectState(agent.agentId);
+      // Diary can reference the day's relationship arc when it moved.
+      const localDay = now.slice(0, 10);
+      const dayHistory = this.state.relationshipHistory(agent.agentId, `${localDay}T00:00:00.000Z`);
+      const relationshipArc =
+        dayHistory.length >= 2 && dayHistory[0].affinity !== dayHistory[dayHistory.length - 1].affinity
+          ? `Relationship today: your bond with ${this.state.config.user.displayName} moved from ${dayHistory[0].affinity} to ${dayHistory[dayHistory.length - 1].affinity} (scale -100..100).`
+          : undefined;
       const result = await runLifeNarrative(llm, {
         agentId: agent.agentId,
         displayName: agent.displayName,
@@ -402,6 +409,7 @@ export class RealmHost {
         now,
         recentNarratives,
         ...(affect !== undefined ? { affect, emotion: { valence: affect.valence, arousal: affect.arousal } } : {}),
+        ...(relationshipArc !== undefined ? { relationshipArc } : {}),
       });
       if ("write" in result) {
         this.state.applyMemoryWrites(agent.agentId, [result.write]);
