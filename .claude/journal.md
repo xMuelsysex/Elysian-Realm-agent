@@ -1,5 +1,10 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补二十三：参与者情绪输入（autoresearch 战役二十九）
+
+- message 可选 emotion{valence,arousal}（校验 -1..1/0..1）；透传到 reply port，user 消息追加共情提示（down/in good spirits/composed）。双向情感感知：角色能感知对方情绪。+3 测试。243 tests 全绿。
+- 坑：StreamFn 契约是事件流（createAssistantMessageEventStream+push start/done）；model 需完整对象；pi context.messages content 是块数组；TS 正则单反斜杠匹配字面点。
+
 ## 2026-08-10 二十二轮补二十二：relationship_history 治理准备（autoresearch 战役二十八）
 
 - relationship_history 加 at 索引（CREATE INDEX IF NOT EXISTS）+ stats.totals.relationshipHistoryRows——无界增长有性能保障与治理数据；删除类裁剪留待主人决策。+1 测试。240 tests 全绿。

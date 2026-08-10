@@ -22,6 +22,7 @@
 - 渲染单一事实来源：`personaSections()`（src/conversation/conversationPrompt.ts 导出）——字符串 → 旧式单节 `Persona:\n...`；结构化 → Identity/Personality/Values/Speech style 四节 + 可选 Character boundaries（红线）/Behavior tendencies/Speech examples 三节。**三个数组必须 `?? []` 容错**（校验器允许缺省，渲染函数要匹配该语义，勿假设数组必在）。
 - 消费点：对话 system prompt、life narrative（tick 日记）、夜间反思——三处共用 personaSections，不各自拼装。
 - 参与者画像：`RealmUserConfig` / `RealmConversationParticipantV1` 可选 `profile`（非空字符串校验）；对话 prompt 注入「About 主人: ...」节（缺省不注入）；宿主 config.user 自动透传。
+- 参与者情绪：`message.emotion {valence -1..1, arousal 0..1}` 可选（校验器拒绝越界）；buildReplyInput 透传 participantEmotion，piConversationReplyPort 在 user 消息追加共情提示（down/in good spirits/composed）。
 - 叙事情感注入：lifeNarrative 接受 `affect`，把 `describeAffectState` 描述注入日记 prompt 的 user 消息；同一快照同时作为记忆 emotion 签名。
 - **OOC 三轨防线**：detectOocLeak 覆盖全部 LLM 输出面——对话回复（analysisReason 标注 + 聊天页 ⚠️ 气泡）、叙事日记与夜间反思（写入前检测，泄露进 tick notes）。
 - 叙事关系弧线：lifeNarrative 接受 `relationshipArc`，日记注入「Relationship today: ... moved from X to Y」（当日≥2 条且首末不同）；宿主 runNarratives 计算传入——日记与夜间反思都引用关系演变。
