@@ -1,5 +1,9 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补二十：OOC 三轨防线（autoresearch 战役二十六）
+
+- detectOocLeak 覆盖全部 LLM 输出面：对话回复（analysisReason + ⚠️ 气泡）、叙事日记与夜间反思（写入前检测，泄露进 tick notes）。+2 测试。239 tests 全绿 + verify:e2e 14 项。
+
 ## 2026-08-10 二十二轮补十九：叙事关系弧线（autoresearch 战役二十五）
 
 - lifeNarrative 接受 relationshipArc，日记 prompt 注入「Relationship today: ... moved from X to Y」（当日≥2 条且首末不同）；宿主 runNarratives 计算传入——日记与夜间反思都引用关系演变。+3 测试。237 tests 全绿 + verify:e2e 14 项。

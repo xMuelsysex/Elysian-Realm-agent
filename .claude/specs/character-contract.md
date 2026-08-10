@@ -23,6 +23,7 @@
 - 消费点：对话 system prompt、life narrative（tick 日记）、夜间反思——三处共用 personaSections，不各自拼装。
 - 参与者画像：`RealmUserConfig` / `RealmConversationParticipantV1` 可选 `profile`（非空字符串校验）；对话 prompt 注入「About 主人: ...」节（缺省不注入）；宿主 config.user 自动透传。
 - 叙事情感注入：lifeNarrative 接受 `affect`，把 `describeAffectState` 描述注入日记 prompt 的 user 消息；同一快照同时作为记忆 emotion 签名。
+- **OOC 三轨防线**：detectOocLeak 覆盖全部 LLM 输出面——对话回复（analysisReason 标注 + 聊天页 ⚠️ 气泡）、叙事日记与夜间反思（写入前检测，泄露进 tick notes）。
 - 叙事关系弧线：lifeNarrative 接受 `relationshipArc`，日记注入「Relationship today: ... moved from X to Y」（当日≥2 条且首末不同）；宿主 runNarratives 计算传入——日记与夜间反思都引用关系演变。
 - 性格调制：`applyPlotEvents` / `computeAffinityDelta` 接受可选 `modifiers`（事件类型→倍率，缺省 1）；宿主 plotEvent 传 `persona.affectModifiers`（手动投喂 + 剧情脚本自动继承）；服务契约（tick 轨）不动。
 - 情绪外露度：`blendConversationEmotion` 接受可选 `rate`（缺省 0.1）；宿主按 `persona.emotionResponsiveness` 调制对话情感闭环权重。
