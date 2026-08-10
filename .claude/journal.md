@@ -1,5 +1,9 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补十九：叙事关系弧线（autoresearch 战役二十五）
+
+- lifeNarrative 接受 relationshipArc，日记 prompt 注入「Relationship today: ... moved from X to Y」（当日≥2 条且首末不同）；宿主 runNarratives 计算传入——日记与夜间反思都引用关系演变。+3 测试。237 tests 全绿 + verify:e2e 14 项。
+
 ## 2026-08-10 二十二轮补十八：经历记忆→对话召回闭环验证（autoresearch 战役二十四）
 
 - 集成测试验证：投喂 praise → 经历记忆写入 → 检索「今天发生了什么好事吗？」topK 3 命中 plot-event 记忆——「经历→记忆→对话提及」闭环真实有效（CJK 二元组检索）。234 tests 全绿。
