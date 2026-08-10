@@ -6,7 +6,7 @@
 // No pi imports: driven through the LlmPort interface.
 
 import type { LlmPort, LlmRequestOptionsLike } from "../ports/ports.js";
-import type { MemoryWrite } from "../memory/memoryRecords.js";
+import type { EmotionSignature, MemoryWrite } from "../memory/memoryRecords.js";
 import { personaSections } from "../conversation/conversationPrompt.js";
 import type { RealmStructuredPersonaV1 } from "../service/realmConversationV1.js";
 import type { RealmMemoryMetadataV1, RealmRoutinePeriodV1 } from "../service/realmStepV1.js";
@@ -23,6 +23,8 @@ export interface LifeNarrativeInput {
   now: string;
   /** A couple of recent narrative memories, oldest first, for continuity. */
   recentNarratives?: readonly string[];
+  /** How the agent feels right now, stamped onto the narrative memory. */
+  emotion?: EmotionSignature;
 }
 
 export function buildLifeNarrativeMessages(input: LifeNarrativeInput): {
@@ -93,6 +95,7 @@ export async function runLifeNarrative(
       sourceIds: [input.agentId],
       visibility: "private",
       tags: [input.agentId, input.period, input.locationId, "life-narrative"],
+      ...(input.emotion !== undefined ? { emotion: input.emotion } : {}),
       metadata: {
         source: "engine",
         period: input.period,

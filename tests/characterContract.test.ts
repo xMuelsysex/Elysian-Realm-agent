@@ -6,7 +6,7 @@ import {
   buildConversationSystemPrompt,
 } from "../src/conversation/conversationPrompt.js";
 import { RealmStateStore } from "../src/host/realmState.js";
-import { buildLifeNarrativeMessages } from "../src/host/lifeNarrative.js";
+import { buildLifeNarrativeMessages, runLifeNarrative } from "../src/host/lifeNarrative.js";
 import { buildReflectionMessages } from "../src/reflection/llmReflectionPlanner.js";
 import type { RealmStructuredPersonaV1 } from "../src/service/realmConversationV1.js";
 import { validateRealmConversationRequestV1 } from "../src/service/realmConversationExecutor.js";
@@ -164,6 +164,42 @@ test("life narrative prompt carries structured persona sections", () => {
   assert.match(system, /Identity:\n爱莉希雅，往世乐土逐火十三英桀/);
   assert.match(system, /Behavior tendencies:/);
   assert.match(system, /Character boundaries/);
+});
+
+test("life narrative write stamps the current emotion signature", async () => {
+  const result = await runLifeNarrative(
+    { name: "fake", model: "fake", completeChat: () => Promise.resolve({ content: "向日葵开了♪" }) },
+    {
+      agentId: "agent_elysia",
+      displayName: "爱莉希雅",
+      persona: "p",
+      period: "morning",
+      locationId: "garden",
+      intent: "照料向日葵",
+      now: "2026-07-26T08:00:00.000Z",
+      emotion: { valence: 0.6, arousal: 0.4 },
+    },
+  );
+  assert.ok("write" in result);
+  assert.deepEqual(result.write.emotion, { valence: 0.6, arousal: 0.4 });
+  assert.equal(result.write.kind, "observation");
+});
+
+test("life narrative write omits emotion when none is given", async () => {
+  const result = await runLifeNarrative(
+    { name: "fake", model: "fake", completeChat: () => Promise.resolve({ content: "向日葵开了♪" }) },
+    {
+      agentId: "agent_elysia",
+      displayName: "爱莉希雅",
+      persona: "p",
+      period: "morning",
+      locationId: "garden",
+      intent: "照料向日葵",
+      now: "2026-07-26T08:00:00.000Z",
+    },
+  );
+  assert.ok("write" in result);
+  assert.equal(result.write.emotion, undefined);
 });
 
 test("reflection prompt carries structured persona sections", () => {

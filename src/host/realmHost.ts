@@ -322,6 +322,9 @@ export class RealmHost {
         .slice(-NARRATIVE_CONTINUITY_WINDOW)
         .map((record) => record.content);
 
+      // Stamp the agent's current affect onto the narrative memory so the
+      // tick track also carries an emotional signature (affect.md candidate).
+      const affect = this.state.affectState(agent.agentId);
       const result = await runLifeNarrative(llm, {
         agentId: agent.agentId,
         displayName: agent.displayName,
@@ -331,6 +334,9 @@ export class RealmHost {
         intent: routine.intent,
         now,
         recentNarratives,
+        ...(affect !== undefined
+          ? { emotion: { valence: affect.valence, arousal: affect.arousal } }
+          : {}),
       });
       if ("write" in result) {
         this.state.applyMemoryWrites(agent.agentId, [result.write]);
