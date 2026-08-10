@@ -144,6 +144,23 @@ try {
   );
   if (historyRows < 1) exitCode = 1;
 
+  // ── conversation emotion blend: the stub's emotion signature must nudge ─
+  // the affect snapshot above the default baseline (0.2) after the chat.
+  let affectValence = -1;
+  try {
+    const db = new DatabaseSync(join(dir, "realm.sqlite"));
+    affectValence = db
+      .prepare("SELECT valence FROM affect_states WHERE agent_id = ?")
+      .get("agent_elysia").valence;
+    db.close();
+  } catch { /* sqlite read failure → affectValence stays -1 */ }
+  results.push(
+    affectValence > 0.2
+      ? `PASS conversation emotion nudged affect to ${affectValence.toFixed(2)}`
+      : `FAIL conversation emotion did not move affect (valence=${affectValence})`,
+  );
+  if (affectValence <= 0.2) exitCode = 1;
+
   // ── nightly loop: tick routines + narrative (+ reflection at night) ───
   // Fresh data dir: startup tick writes 2 routine memories, the narrative 1,
   // plus 2 conversation memories from the chats above. The reflection only

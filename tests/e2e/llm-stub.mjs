@@ -7,7 +7,7 @@ import { createServer } from "node:http";
 
 const PORT = Number(process.env.STUB_PORT ?? 4330);
 const ANALYSIS_JSON =
-  '{"affinityDelta": 3, "mood": "开心", "moodIntensity": 0.7, "reason": "stub analysis", "memoryImportance": 4}';
+  '{"affinityDelta": 3, "mood": "开心", "moodIntensity": 0.7, "reason": "stub analysis", "memoryImportance": 4, "emotion": {"valence": 0.6, "arousal": 0.5}}';
 
 const server = createServer((req, res) => {
   let raw = "";
