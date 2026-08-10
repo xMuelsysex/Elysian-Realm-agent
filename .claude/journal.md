@@ -1,5 +1,11 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补八：对话关系感知（autoresearch 战役十二）
+
+- 对话请求契约加可选 `relationshipHistory`（近 20 条亲和度轨迹）；conversationRunner 透传，prompt 注入「Relationship trajectory: your bond with 主人 has moved from X to Y」（≥2 条且首末不同才注入）；校验器校验元素（有限 affinity + ISO at）。角色在对话中感知关系演变——与夜间反思的关系弧线呼应，形成「关系感知」双轨（对话 + 反思）。
+- +3 测试。213 tests 全绿 + verify:e2e 12 项。
+- 坑：destructure 漏新字段 → ReferenceError（buildConversationSystemPrompt 的 `relationshipHistory` 未解构）；async 测试忘标 async。
+
 ## 2026-08-10 二十二轮补七：关系弧线叙事（autoresearch 战役十一）
 
 - affect.md 最后一个官方候选落地：`relationship_history` 表（syncAffect 统一写路径——affinity 变化或首次出现时追加，无 PK 按 at 排序）；`relationshipHistory(agentId, since?)` 查询；夜间反思注入当日关系弧线行（当天≥2 条且首末不同才注入："Relationship arc today: your bond with 主人 moved from X to Y"）。反思现在同时引用情感弧线与关系弧线。
