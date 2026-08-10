@@ -23,6 +23,8 @@ export interface LlmReflectionPlannerOptions {
   /** Shown to the model so insights stay in the persona's voice. */
   personaName?: string;
   persona?: string | RealmStructuredPersonaV1;
+  /** A one-line relationship trajectory, e.g. "Today your bond with 主人 grew from 20 to 45." */
+  relationshipArc?: string;
   maxInsights?: number;
 }
 
@@ -92,7 +94,12 @@ export function buildReflectionMessages<EvidenceMetadata>(
       '[{"content": "first-person insight in the persona\'s own language", "evidenceIds": ["memory ids that support it"], "importance": integer 0-9}]',
       "Each insight must cite at least one evidence id from the list. Higher importance (6-8) for insights about relationships and feelings; medium (4-5) for habits and observations.",
     ].join("\n"),
-    user: ["Evidence memories:", ...evidenceLines, ...(arcLine !== undefined ? [arcLine] : [])].join("\n"),
+    user: [
+      "Evidence memories:",
+      ...evidenceLines,
+      ...(arcLine !== undefined ? [arcLine] : []),
+      ...(options.relationshipArc !== undefined ? [options.relationshipArc] : []),
+    ].join("\n"),
   };
 }
 

@@ -38,7 +38,7 @@ test("ooc guard is case-insensitive for english patterns", () => {
 
 // ── 宿主集成：analysisReason 标注 ───────────────────────────────────────
 
-function fakeRunner(replyContent: string) {
+function fakeRunner(replyContent: string, affinityDelta?: number) {
   return {
     runner: {
       async run() {
@@ -47,7 +47,11 @@ function fakeRunner(replyContent: string) {
           conversationId: "c1",
           agentId: AGENT_ID,
           reply: { content: replyContent },
-          affect: { analysis: "llm" as const, reason: "心情不错" },
+          affect: {
+            analysis: "llm" as const,
+            reason: "心情不错",
+            ...(affinityDelta !== undefined ? { affinityDelta } : {}),
+          },
           memoryWrites: [],
         };
       },
@@ -427,4 +431,69 @@ test("affectModifiers validation rejects unknown event types and negatives", asy
     }),
   );
   assert.throws(() => new RealmStateStore(dir), /non-negative finite number/);
+});
+
+// ── 关系历史与情感弧线叙事 ──────────────────────────────────────────────
+
+test("affinity changes append to relationship history", async () => {
+  const state = new RealmStateStore(tempDataDir());
+  let clock = new Date(2026, 6, 26, 9, 0, 0);
+  const host = new RealmHost(state, () => fakeRunner("你好", 3).runner, { now: () => clock });
+
+  assert.equal(state.relationshipHistory(AGENT_ID).length, 0, "no history before any change");
+
+  // Fake runner carries an affinityDelta so the relationship moves.
+  await host.chat(AGENT_ID, "你好呀");
+  const afterChat = state.relationshipHistory(AGENT_ID);
+  assert.equal(afterChat.length, 1, "one history row after the first affinity move");
+  assert.equal(afterChat[0].affinity, 3);
+
+  // A second chat with the same delta appends another row.
+  await host.chat(AGENT_ID, "再说一句");
+  const afterSecond = state.relationshipHistory(AGENT_ID);
+  assert.equal(afterSecond.length, 2);
+  assert.equal(afterSecond[1].affinity, 6);
+  assert.ok(afterSecond[1].at >= afterSecond[0].at, "rows are ordered by time");
+});
+
+test("relationship history survives a store reopen", async () => {
+  const dir = tempDataDir();
+  const state = new RealmStateStore(dir);
+  let clock = new Date(2026, 6, 26, 9, 0, 0);
+  const host = new RealmHost(state, () => fakeRunner("你好", 3).runner, { now: () => clock });
+  await host.chat(AGENT_ID, "你好");
+
+  const reopened = new RealmStateStore(dir);
+  assert.equal(reopened.relationshipHistory(AGENT_ID).length, 1, "history persisted in sqlite");
+});
+
+test("reflection prompt quotes the relationship arc when it moved", async () => {
+  const { buildReflectionMessages } = await import("../src/reflection/llmReflectionPlanner.js");
+  const evidence = [
+    {
+      id: "e1",
+      agentId: AGENT_ID,
+      kind: "conversation" as const,
+      content: "和主人一起赏花。",
+      createdAt: "2026-07-26T10:00:00.000Z",
+      importance: 6,
+      lastAccessedAt: "2026-07-26T10:00:00.000Z",
+      sourceIds: [],
+      relatedMemoryIds: [],
+      visibility: "private" as const,
+      tags: [],
+      metadata: {},
+    },
+  ];
+  const { system, user } = buildReflectionMessages(
+    {
+      agentId: AGENT_ID,
+      trigger: { kind: "scheduled", reason: "night", now: "2026-07-26T22:00:00.000Z", sourceIds: [] },
+      evidence,
+    },
+    3,
+    { personaName: "爱莉希雅", persona: "p", relationshipArc: "Relationship arc today: your bond with 主人 moved from 3 to 9 (scale -100..100)." },
+  );
+  assert.ok(system.includes("inner voice"));
+  assert.match(user, /Relationship arc today: your bond with 主人 moved from 3 to 9/);
 });

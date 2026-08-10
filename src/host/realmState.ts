@@ -264,6 +264,12 @@ CREATE TABLE IF NOT EXISTS relationships (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (agent_id, target_id)
 ) STRICT;
+CREATE TABLE IF NOT EXISTS relationship_history (
+  agent_id TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  affinity INTEGER NOT NULL,
+  at TEXT NOT NULL
+) STRICT;
 CREATE TABLE IF NOT EXISTS moods (
   agent_id TEXT NOT NULL PRIMARY KEY,
   mood TEXT NOT NULL,
@@ -339,6 +345,23 @@ export class RealmStateStore {
 
   relationship(agentId: string): RelationshipAffect | undefined {
     return this.affect.getRelationship(agentId, this.config.user.participantId);
+  }
+
+  /**
+   * Affinity history for an agent, oldest first. `since` (inclusive ISO
+   * instant) narrows the window — pass a local-day start for "today's arc".
+   */
+  relationshipHistory(agentId: string, since?: string): readonly { affinity: number; at: string }[] {
+    const rows = (since === undefined
+      ? this.db
+          .prepare("SELECT affinity, at FROM relationship_history WHERE agent_id = ? AND target_id = ? ORDER BY at")
+          .all(agentId, this.config.user.participantId)
+      : this.db
+          .prepare(
+            "SELECT affinity, at FROM relationship_history WHERE agent_id = ? AND target_id = ? AND at >= ? ORDER BY at",
+          )
+          .all(agentId, this.config.user.participantId, since)) as unknown as Array<{ affinity: number; at: string }>;
+    return rows;
   }
 
   mood(agentId: string): AgentMood | undefined {
@@ -845,6 +868,16 @@ export class RealmStateStore {
     }
     const relationship = this.affect.getRelationship(agentId, this.config.user.participantId);
     if (relationship !== undefined) {
+      // Append to the relationship history when the affinity moved (or a
+      // relationship first appears), so reflection can quote the day's arc.
+      const before = this.db
+        .prepare("SELECT affinity FROM relationships WHERE agent_id = ? AND target_id = ?")
+        .get(relationship.agentId, relationship.targetId) as { affinity: number } | undefined;
+      if (before === undefined || before.affinity !== relationship.affinity) {
+        this.db
+          .prepare("INSERT INTO relationship_history (agent_id, target_id, affinity, at) VALUES (?, ?, ?, ?)")
+          .run(relationship.agentId, relationship.targetId, relationship.affinity, relationship.updatedAt);
+      }
       this.db
         .prepare(
           `INSERT INTO relationships (agent_id, target_id, affinity, updated_at) VALUES (?, ?, ?, ?)

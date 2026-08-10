@@ -390,9 +390,17 @@ export class RealmHost {
         continue;
       }
 
+      // Relationship arc: quote today's affinity trajectory when it moved.
+      const history = this.state.relationshipHistory(agent.agentId, `${localDay}T00:00:00.000Z`);
+      const relationshipArc =
+        history.length >= 2 && history[0].affinity !== history[history.length - 1].affinity
+          ? `Relationship arc today: your bond with ${this.state.config.user.displayName} moved from ${history[0].affinity} to ${history[history.length - 1].affinity} (scale -100..100).`
+          : undefined;
+
       const planner = createLlmReflectionPlanner<RealmMemoryMetadataV1>(llm, {
         personaName: agent.displayName,
         persona: agent.persona,
+        ...(relationshipArc !== undefined ? { relationshipArc } : {}),
       });
       const reflection = await runReflection(
         {
