@@ -262,8 +262,9 @@ test("host stats reports non-destructive store counts after chat and tick", asyn
   await host.chat(AGENT_ID, "你好呀");
   const stats = host.stats();
 
-  assert.equal(stats.agents.length, 1);
-  const agent = stats.agents[0];
+  assert.equal(stats.agents.length, state.config.agents.length);
+  const agent = stats.agents.find((entry) => entry.agentId === AGENT_ID);
+  assert.ok(agent, "stats include the chat agent");
   assert.equal(agent.agentId, AGENT_ID);
   assert.equal(agent.displayName, "爱莉希雅");
   assert.ok(agent.conversationTurns >= 2, "chat persists both turns");

@@ -279,20 +279,20 @@ test("host ticks write narratives, and night ticks add reflections", async () =>
 
   const morning = await host.tickIfPeriodChanged();
   assert.ok(morning);
-  assert.equal(morning.narratives, 1, "morning tick writes one narrative");
+  assert.ok(morning.narratives >= 1, "morning tick writes one narrative per agent");
   assert.equal(morning.reflections, 0);
   const narratives = state
     .memoriesFor(AGENT_ID)
     .filter((record) => record.tags.includes("life-narrative"));
-  assert.equal(narratives.length, 1);
+  assert.equal(narratives.length, 1, "elysia gets her narrative");
   assert.match(narratives[0].content, /玫瑰香/);
 
   clock = new Date(2026, 6, 26, 23, 0, 0);
   const night = await host.tickIfPeriodChanged();
   assert.ok(night);
   assert.equal(night.period, "night");
-  assert.equal(night.narratives, 1);
-  assert.equal(night.reflections, 1, "night tick runs the daily reflection");
+  assert.ok(night.narratives >= 1);
+  assert.ok(night.reflections >= 1, "night tick runs the daily reflection");
   const reflections = state
     .memoriesFor(AGENT_ID)
     .filter((record) => record.kind === "reflection" && record.content.includes("多陪陪主人"));
