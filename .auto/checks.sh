@@ -1,10 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 # 正确性门禁：npm test 全量（build + 测试编译 + node --test）。
-# 只让错误通过，抑制成功输出。
+# 成功时静默；失败时把失败输出尾部传给 agent。
 cd "$(dirname "$0")/.."
-npm test 2>&1 | grep -E "^(not ok|# fail|✖|TypeError|Error:)" | head -40
-if npm test >/dev/null 2>&1; then
+
+if npm test >/tmp/elysian-check.log 2>&1; then
   exit 0
 fi
+tail -60 /tmp/elysian-check.log
 exit 1

@@ -14,8 +14,10 @@ const scenarios = JSON.parse(readFileSync(".auto/fidelity-scenarios.json", "utf8
 
 let total = 0;
 let earned = 0;
+let bytes = 0;
 for (const s of scenarios) {
   const prompt = buildConversationSystemPrompt(s.input);
+  bytes += Buffer.byteLength(prompt, "utf8");
   for (const el of s.elements) {
     total += el.weight;
     if (prompt.includes(el.needle)) earned += el.weight;
@@ -23,10 +25,10 @@ for (const s of scenarios) {
 }
 const score = total === 0 ? 0 : Math.round((earned / total) * 100);
 console.log(`METRIC character_fidelity=${score}`);
+console.log(`METRIC prompt_bytes=${bytes}`);
 ' 2>&1
 
-# 测试计数（副指标）：统计 npm test 输出 pass 数量
+# 测试计数（副指标）：统计 npm test 输出 pass 数量（node --test 格式 `ℹ pass N`）
 TEST_OUT=$(npm test 2>&1 || true)
-TESTS=$(echo "$TEST_OUT" | grep -oE "# (pass|tests) [0-9]+" | grep -oE "[0-9]+" | tail -1)
+TESTS=$(printf '%s\n' "$TEST_OUT" | grep -oE 'pass [0-9]+' | grep -oE '[0-9]+' | tail -1 || true)
 echo "METRIC tests=${TESTS:-0}"
-echo "METRIC prompt_bytes=$(wc -c < /dev/null)"
