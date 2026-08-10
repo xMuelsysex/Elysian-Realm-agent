@@ -1,5 +1,9 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补十七：剧情经历记忆化（autoresearch 战役二十三）
+
+- plotEvent 写经历记忆：observation 记忆按 target 三模板（「今天和主人之间发生了一件夸赞的事」），PLOT_EVENT_LABELS 中文标签，importance 3，tags plot-event，metadata plotType/plotTarget；手动投喂与剧情脚本共享路径。角色「经历→记忆→对话可提及」闭环闭合。RealmMemoryMetadataV1 加 plotType/plotTarget。+2 测试。233 tests 全绿 + verify:e2e 14 项。
+
 ## 2026-08-10 二十二轮补十六：e2e 对话情感闭环覆盖（autoresearch 战役二十二）
 
 - llm-stub 分析 JSON 加 emotion（valence 0.6/arousal 0.5）；verify-sse 新增断言：chat 后 affect_states.valence > 0.2（实测 0.39 = tick 脚本 + 两次 chat 情感逼近累计）。对话情感闭环真实链路回归保护到位。e2e 14 项 PASS。231 tests 全绿。

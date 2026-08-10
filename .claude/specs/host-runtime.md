@@ -5,7 +5,7 @@
 ## 持久化（realm-state v2）
 
 - `realm-data/realm.sqlite`（node:sqlite，`DatabaseSync`）存记忆/对话/情感/心情/tick 状态；`realm.json` 保持可手编 JSON（仅配置）。
-- **剧情脚本**：每 agent 可选 `plotScript: [{period, days?, events: [{type, target, intensity?}]}]`（`days` 为 0=周日..6=周六 星期过滤，缺省每天）；宿主 `tickIfPeriodChanged` 在 runTick 后按 period+星期自动投喂（与 tick 同闸门，重启安全）；缺省无脚本零行为变化。affinity 存储已取整（INTEGER 列），`clamped` 语义仅反映越界裁剪。
+- **剧情脚本**：每 agent 可选 `plotScript: [{period, days?, events: [{type, target, intensity?}]}]`（`days` 为 0=周日..6=周六 星期过滤，缺省每天）；宿主 `tickIfPeriodChanged` 在 runTick 后按 period+星期自动投喂（与 tick 同闸门，重启安全）；缺省无脚本零行为变化。affinity 存储已取整（INTEGER 列），`clamped` 语义仅反映越界裁剪。**投喂的 plot 事件同时写经历记忆**（observation，PLOT_EVENT_LABELS 中文标签 + target 三模板，tags plot-event，metadata plotType/plotTarget）——角色可提及经历。
 - **情绪驱动例程**：routine 可选 `mood: low|neutral|high`（valence <-0.15 低 / >0.15 高）；`selectRoutineForPeriod(routines, period, affect)` 纯函数选择（mood 匹配 → 无偏好兜底 → 首条）；runTick 与 runNarratives 统一使用，行为随情绪变化。
 - 每次 mutation 单事务（`inTransaction`，BEGIN IMMEDIATE）；行级增量写，无全量快照。
 - **迁移**：旧 JSON（memories/affect/conversations/tick.json）在 DB 为空时一次性导入，文件原样保留（可手删）。
