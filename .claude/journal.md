@@ -1,5 +1,9 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补二十一：度量覆盖三轨注入（autoresearch 战役二十七）
+
+- measure 支持 kind（conversation/narrative/reflection）：新增叙事轨场景（Identity/Behavior tendencies/情感注入/关系弧线）与反思轨场景（Identity/Values/关系弧线）全 HIT——对话/日记/反思三轨注入全部有防回归度量（10 场景 100 分）。239 tests 全绿。
+
 ## 2026-08-10 二十二轮补二十：OOC 三轨防线（autoresearch 战役二十六）
 
 - detectOocLeak 覆盖全部 LLM 输出面：对话回复（analysisReason + ⚠️ 气泡）、叙事日记与夜间反思（写入前检测，泄露进 tick notes）。+2 测试。239 tests 全绿 + verify:e2e 14 项。
