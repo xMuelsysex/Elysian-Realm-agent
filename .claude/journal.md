@@ -1,5 +1,11 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补十一：度量与 e2e 补全（autoresearch 战役十五六）
+
+- measure 新增「关系轨迹注入」场景（Relationship trajectory 行 + affinity 分级行 needle 全 HIT）——对话关系感知防回归覆盖；梅比乌斯 morning low 例程（低落时独在实验室核对日志）——双角色情绪驱动行为差异化补全。
+- verify-sse 新增 relationship_history 落库断言（chat 后直接查 sqlite 行数 ≥1）——e2e 13 项 PASS，覆盖关系轨迹存储链路。
+- 220 tests 全绿。
+
 ## 2026-08-10 二十二轮补十：反思可见化（autoresearch 战役十四）
 
 - `/v1/host/state` 摘要加 `latestReflection`（最新 kind=reflection 记忆内容，listAgents 内排序取末）；聊天页空历史时展示「🌙 她最近在想：「...」」（80 字符截断）。角色内心生活对用户可见，无需新 API。浏览器验证：宿主启动 tick 自动产出的反思记忆在空历史页展示（截断生效）。
