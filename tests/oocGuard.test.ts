@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { detectOocLeak } from "../src/conversation/oocGuard.js";
 import { RealmHost } from "../src/host/realmHost.js";
 import { RealmStateStore } from "../src/host/realmState.js";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -76,4 +76,98 @@ test("host stream path annotates the analysis reason too", async () => {
   const result = await host.chatStream(AGENT_ID, "你是谁？", (text) => deltas.push(text));
   assert.match(result.analysisReason, /ooc-leak: admits being AI/);
   assert.equal(deltas.join(""), "我是程序。");
+});
+
+// ── 剧情脚本：period 变更时自动投喂 PlotEvent ───────────────────────────
+
+test("realm config accepts a plot script and rejects broken events", () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-plotscript-"));
+  const good = {
+    user: { participantId: "user_master", displayName: "主人" },
+    agents: [
+      {
+        agentId: AGENT_ID,
+        personaId: "elysia",
+        displayName: "爱莉希雅",
+        persona: "p",
+        routines: [],
+        plotScript: [
+          {
+            period: "morning",
+            events: [
+              { type: "gain", target: "self", intensity: 0.3 },
+              { type: "companion_joy", target: "host" },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  writeFileSync(join(dir, "realm.json"), JSON.stringify(good));
+  const store = new RealmStateStore(dir);
+  assert.equal(store.agent(AGENT_ID).plotScript?.length, 1);
+
+  const badIntensity = {
+    ...good,
+    agents: [{ ...good.agents[0], plotScript: [{ period: "morning", events: [{ type: "gain", target: "self", intensity: 2 }] }] }],
+  };
+  writeFileSync(join(dir, "realm.json"), JSON.stringify(badIntensity));
+  assert.throws(() => new RealmStateStore(dir), /intensity must be 0\.\.1/);
+});
+
+test("host feeds scripted plot events on period change", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-plotscript-host-"));
+  const config = {
+    user: { participantId: "user_master", displayName: "主人" },
+    agents: [
+      {
+        agentId: AGENT_ID,
+        personaId: "elysia",
+        displayName: "爱莉希雅",
+        persona: "p",
+        routines: [],
+        plotScript: [
+          {
+            period: "morning",
+            events: [
+              { type: "hostile_act", target: "host", intensity: 0.5 },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  writeFileSync(join(dir, "realm.json"), JSON.stringify(config));
+  const state = new RealmStateStore(dir);
+  let clock = new Date(2026, 6, 26, 9, 0, 0);
+  const host = new RealmHost(state, () => undefined, { now: () => clock });
+
+  const first = await host.tickIfPeriodChanged();
+  assert.ok(first);
+  const affect = state.affectState(AGENT_ID);
+  assert.ok(affect, "scripted event creates an affect state");
+  assert.ok(affect.emotionLabels.anger > 0, "hostile scripted event raises anger");
+
+  // Same period does not re-feed (tick guard already covers this).
+  const skipped = await host.tickIfPeriodChanged();
+  assert.equal(skipped, undefined);
+});
+
+test("host feeds no scripted events without a plot script", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-noscript-"));
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人" },
+      agents: [
+        { agentId: AGENT_ID, personaId: "elysia", displayName: "爱莉希雅", persona: "p", routines: [] },
+      ],
+    }),
+  );
+  const state = new RealmStateStore(dir);
+  let clock = new Date(2026, 6, 26, 9, 0, 0);
+  const host = new RealmHost(state, () => undefined, { now: () => clock });
+  const first = await host.tickIfPeriodChanged();
+  assert.ok(first);
+  assert.equal(state.affectState(AGENT_ID), undefined, "no script means no affect state");
 });

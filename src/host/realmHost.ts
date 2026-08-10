@@ -291,6 +291,7 @@ export class RealmHost {
       return undefined;
     }
     const added = this.runTick(period, date);
+    this.runScriptedPlot(period, date);
     this.state.setTickState({ date: localDate, period });
 
     const notes: string[] = [];
@@ -435,6 +436,20 @@ export class RealmHost {
     };
     this.state.applyAffectProposal(agentId, proposal, at);
     return proposal.affect;
+  }
+
+  /** Feed each agent's scripted plot events for this period, if configured. */
+  private runScriptedPlot(period: RealmRoutinePeriodV1, date: Date): void {
+    const at = date.toISOString();
+    for (const agent of this.state.config.agents) {
+      const script = agent.plotScript?.find((entry) => entry.period === period);
+      if (!script || script.events.length === 0) {
+        continue;
+      }
+      for (const event of script.events) {
+        this.plotEvent(agent.agentId, event);
+      }
+    }
   }
 
   private runTick(period: RealmRoutinePeriodV1, date: Date): number {

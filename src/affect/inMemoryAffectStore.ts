@@ -122,14 +122,17 @@ export class InMemoryAffectStore {
     rawValue: number,
     at: string,
   ): AffinityChange {
-    const affinity = Math.min(AFFINITY_MAX, Math.max(AFFINITY_MIN, rawValue));
+    const bounded = Math.min(AFFINITY_MAX, Math.max(AFFINITY_MIN, rawValue));
+    // Affinity is an integer scale (-100..100); round fractional deltas so
+    // the value survives STRICT INTEGER persistence.
+    const affinity = Math.round(bounded);
     const after: RelationshipAffect = { agentId, targetId, affinity, updatedAt: at };
     this.relationships.set(relationKey(agentId, targetId), after);
 
     return {
       before: before ? { ...before } : undefined,
       after: { ...after },
-      clamped: affinity !== rawValue,
+      clamped: bounded !== rawValue,
     };
   }
 }

@@ -41,6 +41,19 @@ export interface RealmRoutineConfig {
   intent: string;
 }
 
+/** One scripted plot event to auto-feed when the period rolls over. */
+export interface RealmScriptedPlotEvent {
+  type: import("../affect/affectRecords.js").PlotEventType;
+  target: import("../affect/affectRecords.js").PlotEventTarget;
+  intensity?: number;
+}
+
+/** Scripted events per period; absent periods feed nothing. */
+export interface RealmPlotScript {
+  period: RealmRoutinePeriodV1;
+  events: readonly RealmScriptedPlotEvent[];
+}
+
 export interface RealmPersonaConfig {
   agentId: string;
   personaId: string;
@@ -48,6 +61,8 @@ export interface RealmPersonaConfig {
   /** Persona description: plain text, or a structured character contract. */
   persona: string | RealmStructuredPersonaV1;
   routines: readonly RealmRoutineConfig[];
+  /** Optional scripted plot events, fed automatically on period change. */
+  plotScript?: readonly RealmPlotScript[];
 }
 
 export interface RealmUserConfig {
@@ -87,6 +102,19 @@ export const DEFAULT_REALM_CONFIG: RealmConfig = {
           "「上次的约定，我可一直记着呢♪」",
         ],
       },
+      plotScript: [
+        {
+          period: "morning",
+          events: [
+            { type: "gain", target: "self", intensity: 0.3 },
+            { type: "companion_joy", target: "host", intensity: 0.2 },
+          ],
+        },
+        {
+          period: "evening",
+          events: [{ type: "surprise", target: "self", intensity: 0.2 }],
+        },
+      ],
       routines: [
         { period: "morning", locationId: "garden", intent: "在花园里照料向日葵和玫瑰。" },
         { period: "day", locationId: "library", intent: "在图书馆翻看喜欢的诗集。" },
@@ -933,6 +961,7 @@ function validateAgent(input: unknown, index: number): RealmPersonaConfig {
   }
   const persona = validatePersona(record.persona, index);
   const routines = Array.isArray(record.routines) ? record.routines : [];
+  const plotScript = validatePlotScript(record.plotScript, index);
   return {
     agentId: record.agentId as string,
     personaId: record.personaId as string,
@@ -955,5 +984,51 @@ function validateAgent(input: unknown, index: number): RealmPersonaConfig {
         intent: routineRecord.intent,
       };
     }),
+    ...(plotScript !== undefined ? { plotScript } : {}),
   };
+}
+
+function validatePlotScript(
+  input: unknown,
+  index: number,
+): RealmPlotScript[] | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(input)) {
+    throw new RealmStateError(`realm config: agents[${index}].plotScript must be an array`);
+  }
+  return input.map((entry, entryIndex) => {
+    const record = entry as Record<string, unknown>;
+    if (typeof record.period !== "string") {
+      throw new RealmStateError(
+        `realm config: agents[${index}].plotScript[${entryIndex}].period must be a string`,
+      );
+    }
+    if (!Array.isArray(record.events)) {
+      throw new RealmStateError(
+        `realm config: agents[${index}].plotScript[${entryIndex}].events must be an array`,
+      );
+    }
+    const events = record.events.map((event, eventIndex) => {
+      const eventRecord = event as Record<string, unknown>;
+      if (typeof eventRecord.type !== "string" || typeof eventRecord.target !== "string") {
+        throw new RealmStateError(
+          `realm config: agents[${index}].plotScript[${entryIndex}].events[${eventIndex}] needs type, target`,
+        );
+      }
+      const intensity = eventRecord.intensity;
+      if (intensity !== undefined && (typeof intensity !== "number" || intensity < 0 || intensity > 1)) {
+        throw new RealmStateError(
+          `realm config: agents[${index}].plotScript[${entryIndex}].events[${eventIndex}].intensity must be 0..1`,
+        );
+      }
+      return {
+        type: eventRecord.type as RealmScriptedPlotEvent["type"],
+        target: eventRecord.target as RealmScriptedPlotEvent["target"],
+        ...(intensity !== undefined ? { intensity } : {}),
+      };
+    });
+    return { period: record.period as RealmRoutinePeriodV1, events };
+  });
 }
