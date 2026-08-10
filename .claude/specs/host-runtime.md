@@ -9,7 +9,7 @@
 - 每次 mutation 单事务（`inTransaction`，BEGIN IMMEDIATE）；行级增量写，无全量快照。
 - **迁移**：旧 JSON（memories/affect/conversations/tick.json）在 DB 为空时一次性导入，文件原样保留（可手删）。
 - 旧 `persist()` 已删除；宿主 shutdown 不再全量写。
-- 表：`memories`(PK agent_id,id)、`conversations`(PK agent_id,seq)、`relationships`、`moods`、`affect_states`、`tick_state`。JSON 列（source_ids/tags/metadata/emotion/emotion_labels）用 STRICT 表 + JS 校验器。
+- 表：`memories`(PK agent_id,id)、`conversations`(PK agent_id,seq)、`relationships`、`relationship_history`（affinity 变化时经 syncAffect 追加，无 PK 按 at 排序）、`moods`、`affect_states`、`tick_state`。JSON 列（source_ids/tags/metadata/emotion/emotion_labels）用 STRICT 表 + JS 校验器。
 - 测试陷阱：测试运行时 import 解析到 **dist**（包自引用）——手动重编译 .test-dist 后必须 `npm run build` 重建 dist。
 
 ## HTTP 层（Hono）
@@ -38,6 +38,7 @@
 
 - 检索 `tokenize` 用 CJK 重叠二元组（Lucene 风格）+ ASCII 词；中文查询 relevance 通道正常工作。
 - `emotionBias`/`weights.emotion`（默认 0 无偏）实现情绪一致性召回；`describeEvidenceEmotionalArc` 给反思 prompt 注入证据期情感轨迹（<2 条签名记忆不注入）。
+- **关系弧线**：`relationshipHistory(agentId, since?)` 查询亲和度轨迹；夜间反思注入当日关系弧线行（当天≥2 条且首末不同才注入，`Relationship arc today: ... moved from X to Y`）。
 
 ## 验证
 

@@ -38,7 +38,7 @@
 
 ## 后续候选（未做）
 
-- ~~tick 轨记忆打情感签名（引擎已产出状态，接 `MemoryRecord.emotion` 即可）~~ ✅ 2026-08-10 落地：`runLifeNarrative` 接受 `emotion`，宿主 runNarratives 把当前 affect 快照写入 narrative 记忆。
+- ~~tick 轨记忆打情感签名~~ ✅ 2026-08-10（见上）。
+- ~~realm.json 剧情脚本~~ ✅ 2026-08-10（plotScript，host-runtime.md）。
+- ~~情感弧线叙事（反思引用"本周好感从 X 涨到 Y"）~~ ✅ 2026-08-10（relationship_history + 反思注入当日弧线）。
 - EPA 词典全量 ACT（引入 actdata 系数）替换增量表——需文化词典获取/翻译成本，超出当前范围。
-- realm.json 剧情脚本（按时间/周期投喂 PlotEvent 序列）。
-- 情感弧线叙事（反思引用"本周好感从 X 涨到 Y"）。

@@ -1,5 +1,11 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补七：关系弧线叙事（autoresearch 战役十一）
+
+- affect.md 最后一个官方候选落地：`relationship_history` 表（syncAffect 统一写路径——affinity 变化或首次出现时追加，无 PK 按 at 排序）；`relationshipHistory(agentId, since?)` 查询；夜间反思注入当日关系弧线行（当天≥2 条且首末不同才注入："Relationship arc today: your bond with 主人 moved from X to Y"）。反思现在同时引用情感弧线与关系弧线。
+- +3 测试（历史追加/持久化重开/弧线注入）。210 tests 全绿 + verify:e2e 12 项。
+- 坑：ESM 测试不能用 require（改 await import + async 测试）；async 方法用 void 调用会竞态（须 await）；fakeRunner 需带 affinityDelta 才会移动关系。
+
 ## 2026-08-10 二十二轮补六：性格调制情感响应（autoresearch 战役十）
 
 - persona 卡新增可选 `affectModifiers`（事件类型→非负响应倍率）：`applyPlotEvents` + `computeAffinityDelta` 双引擎接受可选 modifiers（缺省 1.0 零破坏）；宿主 plotEvent 传角色调制（手动投喂 + 剧情脚本自动继承），服务契约（tick 轨）不动。
