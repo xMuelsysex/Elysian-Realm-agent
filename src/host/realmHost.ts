@@ -571,7 +571,11 @@ export class RealmHost {
     const at = date.toISOString();
     for (const agent of this.state.config.agents) {
       const script = agent.plotScript?.find((entry) => entry.period === period);
+      // Weekday filter: scripts with `days` only fire on those weekdays.
       if (!script || script.events.length === 0) {
+        continue;
+      }
+      if (script.days !== undefined && !script.days.includes(date.getDay())) {
         continue;
       }
       for (const event of script.events) {

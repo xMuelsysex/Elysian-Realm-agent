@@ -59,6 +59,8 @@ export interface RealmScriptedPlotEvent {
 /** Scripted events per period; absent periods feed nothing. */
 export interface RealmPlotScript {
   period: RealmRoutinePeriodV1;
+  /** Optional weekday filter: 0=Sunday .. 6=Saturday; absent = every day. */
+  days?: readonly number[];
   events: readonly RealmScriptedPlotEvent[];
 }
 
@@ -126,6 +128,11 @@ export const DEFAULT_REALM_CONFIG: RealmConfig = {
         {
           period: "evening",
           events: [{ type: "surprise", target: "self", intensity: 0.2 }],
+        },
+        {
+          period: "evening",
+          days: [0], // Sunday: the weekly flower-market memory surfaces.
+          events: [{ type: "gain", target: "self", intensity: 0.4 }],
         },
       ],
       routines: [
@@ -1148,6 +1155,17 @@ function validatePlotScript(
         `realm config: agents[${index}].plotScript[${entryIndex}].events must be an array`,
       );
     }
+    const days = record.days;
+    if (days !== undefined) {
+      if (
+        !Array.isArray(days) ||
+        days.some((day) => typeof day !== "number" || !Number.isInteger(day) || day < 0 || day > 6)
+      ) {
+        throw new RealmStateError(
+          `realm config: agents[${index}].plotScript[${entryIndex}].days must be an array of 0..6 weekdays`,
+        );
+      }
+    }
     const events = record.events.map((event, eventIndex) => {
       const eventRecord = event as Record<string, unknown>;
       if (typeof eventRecord.type !== "string" || typeof eventRecord.target !== "string") {
@@ -1167,6 +1185,10 @@ function validatePlotScript(
         ...(intensity !== undefined ? { intensity } : {}),
       };
     });
-    return { period: record.period as RealmRoutinePeriodV1, events };
+    return {
+      period: record.period as RealmRoutinePeriodV1,
+      ...(days !== undefined ? { days: days as number[] } : {}),
+      events,
+    };
   });
 }

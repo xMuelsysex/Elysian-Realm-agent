@@ -881,3 +881,89 @@ test("host chat carries the user profile into the conversation request", async (
   const result = await host.chat(AGENT_ID, "你好");
   assert.ok(result.reply.length > 0, "chat works with a profile configured");
 });
+
+// ── 剧情脚本日期轮换 ─────────────────────────────────────────────────────
+
+test("plotScript days filter fires only on matching weekdays", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-plotdays-"));
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人" },
+      agents: [
+        {
+          agentId: AGENT_ID,
+          personaId: "elysia",
+          displayName: "爱莉希雅",
+          persona: "p",
+          routines: [{ period: "evening", locationId: "garden", intent: "散步" }],
+          plotScript: [
+            {
+              period: "evening",
+              days: [0], // Sunday only
+              events: [{ type: "gain", target: "self", intensity: 0.4 }],
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  const state = new RealmStateStore(dir);
+
+  // Sunday 2026-07-26 (getDay() === 0): the script fires.
+  let clock = new Date(2026, 6, 26, 18, 0, 0);
+  const host = new RealmHost(state, () => undefined, { now: () => clock });
+  const sunday = await host.tickIfPeriodChanged();
+  assert.ok(sunday);
+  const sundayAffect = state.affectState(AGENT_ID);
+  assert.ok(sundayAffect && sundayAffect.valence > 0.2, "sunday evening gain fires");
+
+  // Monday 2026-07-27: no evening script → no extra valence bump.
+  const dir2 = mkdtempSync(join(tmpdir(), "elysian-plotdays-mon-"));
+  writeFileSync(
+    join(dir2, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人" },
+      agents: [
+        {
+          agentId: AGENT_ID,
+          personaId: "elysia",
+          displayName: "爱莉希雅",
+          persona: "p",
+          routines: [{ period: "evening", locationId: "garden", intent: "散步" }],
+          plotScript: [
+            { period: "evening", days: [0], events: [{ type: "gain", target: "self", intensity: 0.4 }] },
+          ],
+        },
+      ],
+    }),
+  );
+  const state2 = new RealmStateStore(dir2);
+  clock = new Date(2026, 6, 27, 18, 0, 0); // Monday
+  const host2 = new RealmHost(state2, () => undefined, { now: () => clock });
+  const monday = await host2.tickIfPeriodChanged();
+  assert.ok(monday);
+  const mondayAffect = state2.affectState(AGENT_ID);
+  assert.ok(mondayAffect && Math.abs(mondayAffect.valence - 0.2) < 1e-9, "monday evening script skipped");
+});
+
+test("plotScript days validation rejects out-of-range weekdays", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-baddays-"));
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人" },
+      agents: [
+        {
+          agentId: AGENT_ID,
+          personaId: "elysia",
+          displayName: "爱莉希雅",
+          persona: "p",
+          routines: [],
+          plotScript: [{ period: "evening", days: [7], events: [{ type: "gain", target: "self" }] }],
+        },
+      ],
+    }),
+  );
+  assert.throws(() => new RealmStateStore(dir), /days must be an array of 0\.\.6 weekdays/);
+});
