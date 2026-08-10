@@ -1,5 +1,12 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补：OOC 泄露检测 + tick 轨情感签名（autoresearch 战役二三）
+
+- 战役二 OOC 泄露检测：`src/conversation/oocGuard.ts` 纯函数 detectOocLeak（中英泄露形态：我是AI/作为语言模型/as an AI/I am an AI/游戏角色/说实话我是AI）；宿主 chat+chatStream 双路径在 analysisReason 追加 `ooc-leak:` 标注（不拦截回复，只让泄露可见）。+6 测试。
+- 战役三 tick 轨情感签名（affect.md 候选）：`runLifeNarrative` 接受 emotion 参数写入 observation 记忆；宿主 runNarratives 把当前 affectState 快照 valence/arousal 打进每条 narrative 记忆。tick 与对话两轨记忆现在都带情感签名，反思情感弧线证据更完整。+2 测试。
+- 193 tests 全绿 + verify:e2e 12 项；fidelity 100 保持。
+- 坑：OOC 检测模式需覆盖「作为语言模型」「I am an AI」形态（最初只有「我是」与 "as an" 形态，测试抓出缺口）。
+
 ## 2026-08-10 二十二轮：角色生动性战役一——结构化角色契约（autoresearch character-liveliness）
 
 - 用户需求：从 GitHub 开源项目学习「人物性格、行为」塑造，把崩坏三往世乐土角色变成活生生的人，不 OOC。planner 子代理（gpt-5.6-sol）+ 双 scout 调研，方案落盘 `.pi/plans/character-liveliness.md`（已批准执行）。
