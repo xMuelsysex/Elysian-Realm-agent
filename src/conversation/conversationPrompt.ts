@@ -181,7 +181,10 @@ export function buildConversationSystemPrompt<Metadata>(
   const relationshipLine = relationship
     ? `Relationship with ${participant.displayName}: ${describeAffinity(relationship.affinity)} (affinity ${relationship.affinity} on a -100..100 scale).`
     : `Relationship with ${participant.displayName}: no established relationship yet.`;
-  sections.push(`${moodLine}\n${relationshipLine}`);
+  const profileLine = participant.profile
+    ? `About ${participant.displayName}: ${participant.profile}`
+    : undefined;
+  sections.push([moodLine, relationshipLine, ...(profileLine !== undefined ? [profileLine] : [])].join("\n"));
 
   // Relationship trajectory: let the reply feel the bond evolving across
   // exchanges, not just its current level.

@@ -218,9 +218,14 @@ function validateParticipant(input: unknown): RealmConversationParticipantV1 {
   if (!isRecord(input)) {
     throw new RealmConversationValidationError("participant must be an object");
   }
+  const profile = input.profile;
+  if (profile !== undefined && (typeof profile !== "string" || profile.trim().length === 0)) {
+    throw new RealmConversationValidationError("participant.profile must be a non-empty string");
+  }
   return {
     participantId: requireString(input.participantId, "participant.participantId"),
     displayName: requireString(input.displayName, "participant.displayName"),
+    ...(typeof profile === "string" ? { profile } : {}),
   };
 }
 

@@ -806,3 +806,66 @@ test("emotionResponsiveness validation rejects out-of-range values", async () =>
   );
   assert.throws(() => new RealmStateStore(dir), /emotionResponsiveness must be a number from 0 to 1/);
 });
+
+// ── 参与者画像：角色了解对话对象 ────────────────────────────────────────
+
+test("conversation prompt injects the participant profile", async () => {
+  const { buildConversationSystemPrompt } = await import("../src/conversation/conversationPrompt.js");
+  const prompt = buildConversationSystemPrompt({
+    agent: { agentId: AGENT_ID, personaId: "elysia", displayName: "爱莉希雅", persona: "p" },
+    participant: {
+      participantId: "user_master",
+      displayName: "主人",
+      profile: "喜欢花和自然，语气温和；工作忙碌但总记得来看她。",
+    },
+    memoryHits: [],
+  });
+  assert.match(prompt, /About 主人: 喜欢花和自然，语气温和/);
+});
+
+test("conversation prompt omits the profile line when absent", async () => {
+  const { buildConversationSystemPrompt } = await import("../src/conversation/conversationPrompt.js");
+  const prompt = buildConversationSystemPrompt({
+    agent: { agentId: AGENT_ID, personaId: "elysia", displayName: "爱莉希雅", persona: "p" },
+    participant: { participantId: "user_master", displayName: "主人" },
+    memoryHits: [],
+  });
+  assert.ok(!prompt.includes("About 主人"));
+});
+
+test("realm config accepts a user profile and rejects empty ones", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-userprofile-"));
+  const good = {
+    user: { participantId: "user_master", displayName: "主人", profile: "喜欢花。" },
+    agents: [{ agentId: AGENT_ID, personaId: "elysia", displayName: "爱莉希雅", persona: "p", routines: [] }],
+  };
+  writeFileSync(join(dir, "realm.json"), JSON.stringify(good));
+  const store = new RealmStateStore(dir);
+  assert.equal(store.config.user.profile, "喜欢花。");
+
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      ...good,
+      user: { participantId: "user_master", displayName: "主人", profile: "   " },
+    }),
+  );
+  assert.throws(() => new RealmStateStore(dir), /user.profile must be a non-empty string/);
+});
+
+test("host chat carries the user profile into the conversation request", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-profile-chat-"));
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人", profile: "喜欢向日葵。" },
+      agents: [{ agentId: AGENT_ID, personaId: "elysia", displayName: "爱莉希雅", persona: "p", routines: [] }],
+    }),
+  );
+  const state = new RealmStateStore(dir);
+  const host = new RealmHost(state, () => fakeRunner("你好呀").runner, {
+    now: () => new Date(2026, 6, 26, 9, 0, 0),
+  });
+  const result = await host.chat(AGENT_ID, "你好");
+  assert.ok(result.reply.length > 0, "chat works with a profile configured");
+});

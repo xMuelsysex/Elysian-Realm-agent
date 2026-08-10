@@ -62,6 +62,8 @@ export interface RealmConversationAgentV1 {
 export interface RealmConversationParticipantV1 {
   participantId: string;
   displayName: string;
+  /** What the agent knows about the participant; injected into the prompt. */
+  profile?: string;
 }
 
 export interface RealmConversationTurnV1 {

@@ -76,6 +76,8 @@ export interface RealmPersonaConfig {
 export interface RealmUserConfig {
   participantId: string;
   displayName: string;
+  /** Who the participant is (personality, habits, preferences); injected into prompts. */
+  profile?: string;
 }
 
 export interface RealmConfig {
@@ -961,8 +963,16 @@ function validateRealmConfig(input: unknown): RealmConfig {
   if (ids.size !== agents.length) {
     throw new RealmStateError("realm config: agent ids must be unique");
   }
+  const profile = user.profile;
+  if (profile !== undefined && (typeof profile !== "string" || profile.trim().length === 0)) {
+    throw new RealmStateError("realm config: user.profile must be a non-empty string");
+  }
   return {
-    user: { participantId: user.participantId, displayName: user.displayName },
+    user: {
+      participantId: user.participantId,
+      displayName: user.displayName,
+      ...(typeof profile === "string" ? { profile } : {}),
+    },
     agents,
   };
 }
