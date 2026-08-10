@@ -40,6 +40,7 @@
 - 检索 `tokenize` 用 CJK 重叠二元组（Lucene 风格）+ ASCII 词；中文查询 relevance 通道正常工作。
 - `emotionBias`/`weights.emotion`（默认 0 无偏）实现情绪一致性召回；`describeEvidenceEmotionalArc` 给反思 prompt 注入证据期情感轨迹（<2 条签名记忆不注入）。
 - **关系弧线**：`relationshipHistory(agentId, since?)` 查询亲和度轨迹；夜间反思注入当日关系弧线行（当天≥2 条且首末不同才注入，`Relationship arc today: ... moved from X to Y`）；对话请求带 `relationshipHistory`（近 20 条），prompt 注入 `Relationship trajectory` 行（≥2 条且首末不同）——角色在对话中感知关系演变。
+- **反思可见化**：`/v1/host/state` 摘要含 `latestReflection`（最新 kind=reflection 记忆）；聊天页空历史展示「🌙 她最近在想：「...」」（80 字符截断）。
 
 ## 验证
 

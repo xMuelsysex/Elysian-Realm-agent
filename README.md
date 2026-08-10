@@ -61,7 +61,7 @@ The host is the authoritative process that makes agents "live": it owns and pers
 
 - `GET /chat` — chat UI with a live affinity/mood badge
 - `GET /admin` — LLM configuration (same as the service)
-- `GET /v1/host/state` — agent summaries with live affinity/mood/affect
+- `GET /v1/host/state` — agent summaries with live affinity/mood/affect + `latestReflection`（最新反思内容，空历史聊天页展示「🌙 她最近在想」）
 - `GET /v1/host/stats` — non-destructive store counts + retention diagnostics (per-agent memories/turns, oldestMemoryAt, 90-day-unused staleMemories, SQLite bytes)
 - `GET /v1/host/history/{agentId}` — conversation turns
 - `POST /v1/host/chat` — one exchange; send `{"agentId", "content", "stream": true}` for SSE: `delta` frames (reply text), `done` (reply complete — UI unlocks), `applied` (final affinity/mood after analysis), `error` on failures; omit `stream` for the JSON response

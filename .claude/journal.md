@@ -1,5 +1,11 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补十：反思可见化（autoresearch 战役十四）
+
+- `/v1/host/state` 摘要加 `latestReflection`（最新 kind=reflection 记忆内容，listAgents 内排序取末）；聊天页空历史时展示「🌙 她最近在想：「...」」（80 字符截断）。角色内心生活对用户可见，无需新 API。浏览器验证：宿主启动 tick 自动产出的反思记忆在空历史页展示（截断生效）。
+- +4 测试（摘要暴露/缺省/页面渲染逻辑）。220 tests 全绿 + verify:e2e 12 项。
+- 坑：RealmMemoryMetadataV1.metadata 需 source 字段（TS2741）；SQL 模板串引号易错（node:sqlite 直接 exec 时用参数化或转义）。
+
 ## 2026-08-10 二十二轮补九：情绪驱动行为（autoresearch 战役十三）
 
 - 情绪→行为闭环最后一环：routine 可选 `mood: low|neutral|high`（valence <-0.15 低 / >0.15 高）；`selectRoutineForPeriod` 纯函数（mood 匹配→无偏好兜底→首条），runTick 与 runNarratives 统一使用——低落时角色待家里而非去花园。默认爱莉希雅 morning 加 low 变体（在家整理干花）。旧配置（无 mood 字段）行为不变。
