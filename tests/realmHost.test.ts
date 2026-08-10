@@ -86,6 +86,9 @@ test("served page scripts are syntactically valid", () => {
     CHAT_PAGE_HTML.includes(String.raw`\b([45]\d{2})\b`),
     "chat page must embed the rendered status-classification regex",
   );
+  // OOC red-line leaks must surface visibly on both chat paths (SSE + JSON).
+  assert.ok(CHAT_PAGE_HTML.includes('includes("ooc-leak")'), "chat page must render OOC leak annotations");
+  assert.equal(CHAT_PAGE_HTML.split('includes("ooc-leak")').length - 1, 2, "both SSE and JSON paths carry the OOC leak check");
 });
 
 test("first run seeds the default realm with a hand-editable config", () => {

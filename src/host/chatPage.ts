@@ -251,6 +251,11 @@ $("form").addEventListener("submit", async (event) => {
         current.affinity = applied.affinity;
         current.mood = applied.mood;
         renderBadge(current);
+        // OOC red-line leaks surface visibly (analysisReason is annotated by
+        // the host with "ooc-leak: ..." when the reply broke character).
+        if (applied.analysisReason && String(applied.analysisReason).includes("ooc-leak")) {
+          bubble("sys", "⚠️ " + String(applied.analysisReason));
+        }
       } else if (!done) {
         bubble("sys", "流式对话未收到完成事件");
       }
@@ -263,6 +268,9 @@ $("form").addEventListener("submit", async (event) => {
         current.affinity = body.affinity;
         current.mood = body.mood;
         renderBadge(current);
+        if (body.analysisReason && String(body.analysisReason).includes("ooc-leak")) {
+          bubble("sys", "⚠️ " + String(body.analysisReason));
+        }
       } else {
         bubble("sys", body.error?.message ?? \`发送失败 (HTTP \${response.status})\`);
       }
