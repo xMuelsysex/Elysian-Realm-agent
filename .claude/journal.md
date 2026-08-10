@@ -1,5 +1,13 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补五：OOC 可见化 + 对话情感闭环（autoresearch 战役八九）
+
+- OOC 标注可见化：聊天页 SSE+JSON 双路径在 analysisReason 含 ooc-leak 时显示 ⚠️ 气泡（回归断言锁两处 includes），浏览器验证（临时 OOC stub 回复「其实我是AI」→ 页面显示「⚠️ stub analysis; ooc-leak: admits being AI」）。
+- 对话情感闭环（扩展 affect.md 设计）：宿主应用对话 proposal 后以 0.1 权重把 emotion 签名逼近 AffectState（blendConversationEmotion，plot 强度 1.0 仍主导）——情绪在对话间有惯性，聊天开心会温和抬升 valence。+4 测试。
+- 203 tests 全绿 + verify:e2e 12 项。
+- 坑：浮点 0.08000000000000002 需容差断言；无 LLM 宿主 chat 抛错需 fake runner。
+- 设计变化：affect.md 补「对话情感闭环」条款（签名仍打记忆 + 宿主低权重情感反馈）。
+
 ## 2026-08-10 二十二轮补四：多角色度量 + 叙事情感注入（autoresearch 战役六七）
 
 - measure 新增梅比乌斯差异化场景（9 needle：身份/逐火之蛾/科学家/红线/风格/示例句）全 HIT——多角色契约注入验证，fidelity 保持 100，度量面覆盖双角色。

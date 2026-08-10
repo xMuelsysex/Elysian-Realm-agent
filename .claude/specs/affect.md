@@ -21,6 +21,7 @@
 - `PlotEvent`：`{ id, type, target: self|host|other, intensity [0,1], at }`；类型 11 种（kind_act / hostile_act / praise / criticism / loss / gain / threat / surprise / companion_joy / companion_sad / neutral）。
 - 规则引擎（`src/affect/plotRules.ts`，纯函数）：`PLOT_EVENT_RULES` 事件→增量表；`applyPlotEvents` = 先按 `AFFECT_DECAY_RATE`（0.15）指数回归基线/标签归零，再叠加事件增量（intensity 线性缩放），全程裁剪；`computeAffinityDelta` 只累计 target=host 的事件，每调用上限 `MAX_TICK_AFFINITY_DELTA`（10）。
 - 分工：affect 快照管"现在怎样"，记忆流管"发生过什么"；`AgentMood`（自由文本+强度，对话分析产出）与 `AffectState`（剧情引擎产出）并存，互不覆盖；对话产生的 `EmotionSignature` 只打记忆，不写 AffectState。
+- **对话情感闭环（2026-08-10 补充）**：宿主在应用对话 proposal 后，若分析产出 `emotion` 签名，以 `CONVERSATION_EMOTION_BLEND_RATE`（0.1）权重把 AffectState 的 valence/arousal 逼近签名方向——情绪在对话间有惯性，plot 事件（强度 1.0）仍主导；标签不动；无签名 no-op。扩展了"签名只打记忆"：签名仍打记忆（prompt 引用），宿主额外做低权重情感反馈。
 
 ## 契约流
 
