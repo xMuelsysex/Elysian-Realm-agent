@@ -154,6 +154,29 @@
     ]
   },
   {
+    "name": "关系轨迹注入",
+    "input": {
+      "agent": {
+        "agentId": "agent_elysia",
+        "personaId": "elysia",
+        "displayName": "爱莉希雅",
+        "persona": "爱莉希雅，乐园的粉色妖精小姐♪"
+      },
+      "participant": { "participantId": "user_master", "displayName": "主人" },
+      "relationship": { "agentId": "agent_elysia", "targetId": "user_master", "affinity": 40, "updatedAt": "2026-07-26T12:00:00.000Z" },
+      "relationshipHistory": [
+        { "affinity": 10, "at": "2026-07-26T09:00:00.000Z" },
+        { "affinity": 25, "at": "2026-07-26T10:00:00.000Z" },
+        { "affinity": 40, "at": "2026-07-26T12:00:00.000Z" }
+      ],
+      "memoryHits": []
+    },
+    "elements": [
+      { "needle": "Relationship trajectory: your bond with 主人 has moved from 10 to 40", "weight": 3 },
+      { "needle": "close (affinity 40", "weight": 2 }
+    ]
+  },
+  {
     "name": "OOC 红线",
     "input": {
       "agent": {

@@ -166,6 +166,12 @@ export const DEFAULT_REALM_CONFIG: RealmConfig = {
       },
       routines: [
         { period: "morning", locationId: "lab", intent: "在实验室整理昨夜的数据记录。" },
+        {
+          period: "morning",
+          locationId: "lab",
+          intent: "在实验室核对昨天的实验日志，独自分析数据。",
+          mood: "low",
+        },
         { period: "day", locationId: "library", intent: "在图书馆查阅进化相关的文献。" },
         { period: "evening", locationId: "lab", intent: "在实验室核对今天的实验结果。" },
         { period: "night", locationId: "home", intent: "在住处复盘实验，撰写观察笔记。" },
