@@ -1,5 +1,15 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮：角色生动性战役一——结构化角色契约（autoresearch character-liveliness）
+
+- 用户需求：从 GitHub 开源项目学习「人物性格、行为」塑造，把崩坏三往世乐土角色变成活生生的人，不 OOC。planner 子代理（gpt-5.6-sol）+ 双 scout 调研，方案落盘 `.pi/plans/character-liveliness.md`（已批准执行）。
+- 借鉴：SillyTavern character-card-spec 字段化、CharacterGLM 分层 prompt、Letta persona blocks、ChatHaruhi few-shot、Reflexion、GOAP/Big Five（仅描述注入，不引入数值权重）→ 全部映射在 `.claude/specs/character-contract.md`。
+- 落地 P1-P4：`RealmStructuredPersonaV1`（identity/personality/values/speechStyle/boundaries/behaviorTraits/exampleLines）；`personaSections()` 纯函数分块注入（对话 prompt + lifeNarrative + 反思三处复用）；双校验器（realmState.validatePersona + conversationExecutor）；旧字符串 persona 兼容（逐字节不变）；默认配置新增第二位英桀梅比乌斯（差异化：冷静科学家 vs 爱莉希雅开朗）。
+- 验证：185 tests 全绿（+8 characterContract.test.ts）；verify:e2e 12 项 PASS（新增多 agent 断言：state 列出梅比乌斯 + 独立聊天 + 历史持久化）；浏览器验证 chat 页多角色选择器切换+聊天+徽标全 PASS。
+- 指标：character_fidelity 36→100（measure 修正：needle 须匹配 prompt 实际输出文本而非内部字段名）。
+- 坑：校验器重建对象非引用相等（deepEqual）；可选数组渲染须 ?? [] 容错；多 agent 默认配置破坏两个依赖单 agent 的测试（改健壮断言）；fuser 清理端口；favicon 404 无害。
+- 候选延后：P5 自我认知记忆、行为数值权重、示例场景化检索、OOC 事后校验、性格调制衰减——见 `.auto/ideas.md`。
+
 ## 2026-08-09 二十一轮：剧情投喂 UI 验证（autoresearch exp54）
 
 - 剧情投喂浏览器级全流程（夸赞→pride 0.50/joy 0.40 气泡+徽标更新）。chat 页全部交互与 admin 页浏览器级验证完毕，UI 覆盖闭合。
