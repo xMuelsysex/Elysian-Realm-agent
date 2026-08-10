@@ -1,5 +1,11 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补九：情绪驱动行为（autoresearch 战役十三）
+
+- 情绪→行为闭环最后一环：routine 可选 `mood: low|neutral|high`（valence <-0.15 低 / >0.15 高）；`selectRoutineForPeriod` 纯函数（mood 匹配→无偏好兜底→首条），runTick 与 runNarratives 统一使用——低落时角色待家里而非去花园。默认爱莉希雅 morning 加 low 变体（在家整理干花）。旧配置（无 mood 字段）行为不变。
+- +4 测试（分带/选择器/宿主集成/校验拒绝）。217 tests 全绿 + verify:e2e 12 项。
+- 坑：hostile_act 一次到 -0.15 边界不触发 low（需两次）；同 day 同 period 不重复 tick（先 plotEvent 再首次 tick）；默认配置 routines 数量断言过时。
+
 ## 2026-08-10 二十二轮补八：对话关系感知（autoresearch 战役十二）
 
 - 对话请求契约加可选 `relationshipHistory`（近 20 条亲和度轨迹）；conversationRunner 透传，prompt 注入「Relationship trajectory: your bond with 主人 has moved from X to Y」（≥2 条且首末不同才注入）；校验器校验元素（有限 affinity + ISO at）。角色在对话中感知关系演变——与夜间反思的关系弧线呼应，形成「关系感知」双轨（对话 + 反思）。
