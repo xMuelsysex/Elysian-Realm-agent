@@ -1,5 +1,12 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补六：性格调制情感响应（autoresearch 战役十）
+
+- persona 卡新增可选 `affectModifiers`（事件类型→非负响应倍率）：`applyPlotEvents` + `computeAffinityDelta` 双引擎接受可选 modifiers（缺省 1.0 零破坏）；宿主 plotEvent 传角色调制（手动投喂 + 剧情脚本自动继承），服务契约（tick 轨）不动。
+- 差异化：爱莉希雅 praise 1.3 / criticism 0.8（珍惜夸奖、宽容批评）；梅比乌斯 praise 0.4 / criticism 1.6（不为所动但记仇）——同一剧情事件两位英桀情感/亲和响应不同，性格真正影响行为。
+- 双校验器（realmState/conversationExecutor）拒绝未知事件类型与负值。+4 测试（引擎缩放/宿主应用/双角色差异/校验拒绝）。207 tests 全绿 + verify:e2e 12 项。
+- 坑：edit 替换残留多余闭括号 → TS1128（两个文件各一个孤立 `}`，替换后需检查文件尾）。
+
 ## 2026-08-10 二十二轮补五：OOC 可见化 + 对话情感闭环（autoresearch 战役八九）
 
 - OOC 标注可见化：聊天页 SSE+JSON 双路径在 analysisReason 含 ooc-leak 时显示 ⚠️ 气泡（回归断言锁两处 includes），浏览器验证（临时 OOC stub 回复「其实我是AI」→ 页面显示「⚠️ stub analysis; ooc-leak: admits being AI」）。
