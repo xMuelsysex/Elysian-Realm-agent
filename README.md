@@ -57,6 +57,8 @@ npm run host     # stateful realm host: chat UI + persistence + tick scheduler
 
 The host is the authoritative process that makes agents "live": it owns and persists world state under `./realm-data/` (`ELYSIAN_REALM_DATA` to override) — persona config (`realm.json`, hand-editable, seeded with a default persona on first run) plus a SQLite store (`realm.sqlite`, via the built-in `node:sqlite`) holding memory streams, affect snapshots, conversation histories, and tick state, with one transaction per mutation. Legacy full-snapshot JSON files (memories/affect/conversations/tick) are imported once on first open. It applies conversation proposals (memory writes, affinity deltas, moods) automatically, and runs a deterministic routine tick whenever the local wall-clock period changes (morning 6–11, day 11–17, evening 17–22, night otherwise), so agents accumulate a daily life between conversations.
 
+`agents[].persona` accepts either a plain description string (legacy) or a **structured character contract** (recommended) with facets injected into conversation, life-narrative, and nightly-reflection prompts: `identity`, `personality`, `values`, `speechStyle`, `boundaries` (OOC red lines), `behaviorTraits`, and `exampleLines` (in-voice sample lines). A plain string is rendered as the legacy single `Persona:` section.
+
 - `GET /chat` — chat UI with a live affinity/mood badge
 - `GET /admin` — LLM configuration (same as the service)
 - `GET /v1/host/state` — agent summaries with live affinity/mood/affect

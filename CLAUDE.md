@@ -21,6 +21,7 @@ npm run typecheck   # tsc strict
 - 改 pi 相关代码（依赖升级、适配器、bootstrap）前先读 `.claude/specs/pi-integration.md`。
 - 改情感/剧情相关代码（affect 模块、PlotEvent、tick/对话的 affect 字段、宿主情感应用）前先读 `.claude/specs/affect.md`。
 - 改宿主持久化/HTTP 路由/聊天协议/admin 配置语义前先读 `.claude/specs/host-runtime.md`。
+- 改 persona 相关代码（realm.json 角色卡、persona 类型、prompt 注入、校验器）前先读 `.claude/specs/character-contract.md`。
 
 ## 记忆约定
 

@@ -41,4 +41,15 @@
 
 ## What's Been Tried
 
-（实验循环开始后更新。基线：现有 177 tests 全绿，persona 为单段字符串注入。）
+（2026-08-10 战役一：P1-P4 完成）
+
+- **P1 结构化角色契约** ✅：`RealmStructuredPersonaV1`（identity/personality/values/speechStyle/boundaries/behaviorTraits/exampleLines），realm.json + DEFAULT_REALM_CONFIG 升级爱莉希雅角色卡（往世乐土设定+♪+OOC 红线），字符串 persona 兼容（旧路径逐字节不变）。
+- **P2 说话风格注入** ✅：personaSections 纯函数分块渲染，对话 prompt 注入 Speech style + Speech examples（few-shot 口吻锚）。
+- **P3 OOC 红线** ✅：boundaries 注入「Character boundaries (never break these)」节，正向表述。
+- **P4 叙事/反思复用** ✅：lifeNarrative + llmReflectionPlanner 共用 personaSections（tick 轨也吃角色契约）。
+- **双校验器**：realmState.validatePersona + conversationExecutor.validatePersona（同规则，可选数组默认 []，渲染必须 ?? [] 容错）。
+- **测试**：characterContract.test.ts 8 条（分块/兼容/缺字段/校验拒绝/叙事反思注入）。185 tests 全绿；verify:e2e 10 项 PASS（宿主全链路零破坏）。
+- **指标**：fidelity 36→100（measure 缺陷修正：needle 匹配 prompt 节标题与内容，非内部字段名）；prompt_bytes 3102→5217（信息密度合理增加）。
+- 死路/教训：measure 场景 persona 缺必填字段会崩渲染函数（可选数组 ?? []）；校验器重建对象非引用相等（deepEqual）。
+
+待探索（ideas.md）：P5 角色自我认知记忆（延后，YAGNI）；行为倾向数值化权重（不引入，保持描述注入）。
