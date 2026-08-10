@@ -39,13 +39,13 @@
       "memoryHits": []
     },
     "elements": [
-      { "needle": "identity", "weight": 3 },
-      { "needle": "personality", "weight": 3 },
-      { "needle": "values", "weight": 3 },
-      { "needle": "speechStyle", "weight": 3 },
-      { "needle": "boundaries", "weight": 3 },
-      { "needle": "behaviorTraits", "weight": 3 },
-      { "needle": "exampleLines", "weight": 3 },
+      { "needle": "Identity:", "weight": 3 },
+      { "needle": "Personality:", "weight": 3 },
+      { "needle": "Values:", "weight": 3 },
+      { "needle": "Speech style:", "weight": 3 },
+      { "needle": "Character boundaries (never break these):", "weight": 3 },
+      { "needle": "Behavior tendencies:", "weight": 3 },
+      { "needle": "Speech examples (match this voice):", "weight": 3 },
       { "needle": "♪", "weight": 2 }
     ]
   },
