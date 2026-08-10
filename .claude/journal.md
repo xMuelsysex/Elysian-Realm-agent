@@ -1,5 +1,9 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补二十二：relationship_history 治理准备（autoresearch 战役二十八）
+
+- relationship_history 加 at 索引（CREATE INDEX IF NOT EXISTS）+ stats.totals.relationshipHistoryRows——无界增长有性能保障与治理数据；删除类裁剪留待主人决策。+1 测试。240 tests 全绿。
+
 ## 2026-08-10 二十二轮补二十一：度量覆盖三轨注入（autoresearch 战役二十七）
 
 - measure 支持 kind（conversation/narrative/reflection）：新增叙事轨场景（Identity/Behavior tendencies/情感注入/关系弧线）与反思轨场景（Identity/Values/关系弧线）全 HIT——对话/日记/反思三轨注入全部有防回归度量（10 场景 100 分）。239 tests 全绿。

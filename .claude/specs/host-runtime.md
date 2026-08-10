@@ -10,7 +10,7 @@
 - 每次 mutation 单事务（`inTransaction`，BEGIN IMMEDIATE）；行级增量写，无全量快照。
 - **迁移**：旧 JSON（memories/affect/conversations/tick.json）在 DB 为空时一次性导入，文件原样保留（可手删）。
 - 旧 `persist()` 已删除；宿主 shutdown 不再全量写。
-- 表：`memories`(PK agent_id,id)、`conversations`(PK agent_id,seq)、`relationships`、`relationship_history`（affinity 变化时经 syncAffect 追加，无 PK 按 at 排序）、`moods`、`affect_states`、`tick_state`。JSON 列（source_ids/tags/metadata/emotion/emotion_labels）用 STRICT 表 + JS 校验器。
+- 表：`memories`(PK agent_id,id)、`conversations`(PK agent_id,seq)、`relationships`、`relationship_history`（affinity 变化时经 syncAffect 追加，无 PK 按 at 排序）、`moods`、`affect_states`、`tick_state`。JSON 列（source_ids/tags/metadata/emotion/emotion_labels）用 STRICT 表 + JS 校验器。 relationship_history 有 `at` 索引（idx_relationship_history_at），stats.totals 暴露 `relationshipHistoryRows`；裁剪（删除类）未做，留待治理决策。
 - 测试陷阱：测试运行时 import 解析到 **dist**（包自引用）——手动重编译 .test-dist 后必须 `npm run build` 重建 dist。
 
 ## HTTP 层（Hono）
