@@ -58,6 +58,8 @@ export interface RealmAgentSummary {
   mood?: AgentMood;
   affect?: AffectState;
   memoryCount: number;
+  /** The agent's most recent nightly reflection, when one exists. */
+  latestReflection?: string;
 }
 
 export interface RealmHostOptions {
@@ -159,15 +161,22 @@ export class RealmHost {
   }
 
   listAgents(): RealmAgentSummary[] {
-    return this.state.config.agents.map((agent) => ({
-      agentId: agent.agentId,
-      displayName: agent.displayName,
-      personaId: agent.personaId,
-      affinity: this.state.relationship(agent.agentId)?.affinity ?? 0,
-      mood: this.state.mood(agent.agentId),
-      affect: this.state.affectState(agent.agentId),
-      memoryCount: this.state.memoriesFor(agent.agentId).length,
-    }));
+    return this.state.config.agents.map((agent) => {
+      const memories = this.state.memoriesFor(agent.agentId);
+      const latestReflection = memories
+        .filter((record) => record.kind === "reflection")
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.content;
+      return {
+        agentId: agent.agentId,
+        displayName: agent.displayName,
+        personaId: agent.personaId,
+        affinity: this.state.relationship(agent.agentId)?.affinity ?? 0,
+        mood: this.state.mood(agent.agentId),
+        affect: this.state.affectState(agent.agentId),
+        memoryCount: memories.length,
+        ...(latestReflection !== undefined ? { latestReflection } : {}),
+      };
+    });
   }
 
   user(): { participantId: string; displayName: string } {

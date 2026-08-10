@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { detectOocLeak } from "../src/conversation/oocGuard.js";
+import { CHAT_PAGE_HTML } from "../src/host/chatPage.js";
 import { blendConversationEmotion } from "../src/affect/plotRules.js";
 import { createInitialAffectState } from "../src/affect/plotRules.js";
 import { RealmHost } from "../src/host/realmHost.js";
@@ -664,4 +665,56 @@ test("routine mood validation rejects unknown bands", async () => {
     }),
   );
   assert.throws(() => new RealmStateStore(dir), /mood must be low, neutral, or high/);
+});
+
+// ── 反思可见化：摘要暴露最近心事 ────────────────────────────────────────
+
+test("agent summary exposes the latest reflection", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-reflsummary-"));
+  const state = new RealmStateStore(dir);
+  state.applyMemoryWrites(AGENT_ID, [
+    {
+      id: "refl_1",
+      kind: "reflection",
+      content: "今天的一切都让我想多陪陪主人。",
+      createdAt: "2026-07-26T23:00:00.000Z",
+      importance: 7,
+      sourceIds: [AGENT_ID],
+      visibility: "private",
+      tags: [AGENT_ID, "reflection"],
+      metadata: { source: "engine", period: "night" },
+    },
+    {
+      id: "obs_1",
+      kind: "observation",
+      content: "花园的风很舒服。",
+      createdAt: "2026-07-26T10:00:00.000Z",
+      importance: 4,
+      sourceIds: [AGENT_ID],
+      visibility: "private",
+      tags: [AGENT_ID, "life-narrative"],
+      metadata: { source: "engine", period: "morning" },
+    },
+  ]);
+  const host = new RealmHost(state, () => undefined, {
+    now: () => new Date(2026, 7, 8, 9, 0),
+  });
+  const summary = host.listAgents()[0];
+  assert.equal(summary.latestReflection, "今天的一切都让我想多陪陪主人。");
+  assert.equal(summary.memoryCount, 2, "summary counts all memories");
+});
+
+test("agent summary omits latestReflection when none exists", () => {
+  const state = new RealmStateStore(tempDataDir());
+  const host = new RealmHost(state, () => undefined, {
+    now: () => new Date(2026, 7, 8, 9, 0),
+  });
+  const summary = host.listAgents()[0];
+  assert.equal(summary.latestReflection, undefined);
+});
+
+
+test("chat page embeds the latest-reflection renderer", () => {
+  assert.ok(CHAT_PAGE_HTML.includes("她最近在想"), "chat page must show the agent's recent reflection");
+  assert.ok(CHAT_PAGE_HTML.includes("latestReflection"), "chat page must read latestReflection from the summary");
 });

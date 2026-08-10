@@ -136,6 +136,10 @@ async function loadAgent(agent) {
   }
   if ((body.turns ?? []).length === 0) {
     bubble("sys", \`和\${agent.displayName}的故事从这里开始～\`);
+    if (agent.latestReflection) {
+      const thought = String(agent.latestReflection).slice(0, 80);
+      bubble("sys", \`🌙 她最近在想：「\${thought}\${String(agent.latestReflection).length > 80 ? "…" : ""}」\`);
+    }
   }
 }
 
