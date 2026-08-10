@@ -113,6 +113,7 @@ function buildReplyInput(request: RealmConversationRequestV1): ConversationReply
     agent: request.agent,
     participant: request.participant,
     relationship: request.relationship,
+    relationshipHistory: request.relationshipHistory,
     mood: request.mood,
     affect: request.affect,
     memoryHits: retrieval.hits,

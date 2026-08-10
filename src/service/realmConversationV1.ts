@@ -85,6 +85,11 @@ export interface RealmConversationRequestV1 {
   memories: readonly RealmMemoryRecordV1[];
   /** How the agent currently feels about the participant, if established. */
   relationship?: RelationshipAffect;
+  /**
+   * Affinity history (oldest first) so the reply can feel the relationship
+   * evolving; absent = no trajectory line.
+   */
+  relationshipHistory?: readonly { affinity: number; at: string }[];
   /** The agent's current mood, if established. */
   mood?: AgentMood;
   /** The agent's current plot-driven emotional state, if established. */

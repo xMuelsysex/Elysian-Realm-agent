@@ -35,6 +35,7 @@ import { detectOocLeak } from "../conversation/oocGuard.js";
 import type { RealmStateStore, RealmStoreStats, RealmPersonaConfig } from "./realmState.js";
 
 const CHAT_HISTORY_WINDOW = 20;
+const RELATIONSHIP_HISTORY_WINDOW = 20;
 const NARRATIVE_CONTINUITY_WINDOW = 3;
 const REFLECTION_EVIDENCE_LIMIT = 12;
 
@@ -255,6 +256,7 @@ export class RealmHost {
       participant: this.state.config.user,
       memories: this.state.memoriesFor(agentId),
       relationship: this.state.relationship(agentId),
+      relationshipHistory: this.state.relationshipHistory(agentId).slice(-RELATIONSHIP_HISTORY_WINDOW),
       mood: this.state.mood(agentId),
       affect: this.state.affectState(agentId),
       history: this.state.historyFor(agentId, CHAT_HISTORY_WINDOW),

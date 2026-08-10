@@ -64,6 +64,7 @@ export function validateRealmConversationRequestV1(input: unknown): RealmConvers
 
   const memories = validateMemories(input.memories, agent.agentId);
   const relationship = validateRelationship(input.relationship, agent, participant);
+  const relationshipHistory = validateRelationshipHistory(input.relationshipHistory);
   const mood = validateMood(input.mood, agent);
   const affect = validateAffect(input.affect, agent);
   const history = validateHistory(input.history);
@@ -78,12 +79,36 @@ export function validateRealmConversationRequestV1(input: unknown): RealmConvers
     participant,
     memories,
     ...(relationship ? { relationship } : {}),
+    ...(relationshipHistory ? { relationshipHistory } : {}),
     ...(mood ? { mood } : {}),
     ...(affect ? { affect } : {}),
     history,
     message,
     ...(options ? { options } : {}),
   };
+}
+
+function validateRelationshipHistory(
+  input: unknown,
+): readonly { affinity: number; at: string }[] | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(input)) {
+    throw new RealmConversationValidationError("relationshipHistory must be an array");
+  }
+  return input.map((entry, index) => {
+    const record = entry as Record<string, unknown>;
+    if (
+      typeof record.affinity !== "number" || !Number.isFinite(record.affinity) ||
+      typeof record.at !== "string" || Number.isNaN(Date.parse(record.at))
+    ) {
+      throw new RealmConversationValidationError(
+        `relationshipHistory[${index}] needs a finite affinity and an ISO at`,
+      );
+    }
+    return { affinity: record.affinity, at: record.at };
+  });
 }
 
 function validateAgent(input: unknown): RealmConversationAgentV1 {

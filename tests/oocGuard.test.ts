@@ -497,3 +497,72 @@ test("reflection prompt quotes the relationship arc when it moved", async () => 
   assert.ok(system.includes("inner voice"));
   assert.match(user, /Relationship arc today: your bond with 主人 moved from 3 to 9/);
 });
+
+// ── 对话关系感知：prompt 注入关系轨迹 ───────────────────────────────────
+
+test("host chat carries relationship history into the conversation request", async () => {
+  const { buildConversationSystemPrompt } = await import("../src/conversation/conversationPrompt.js");
+  const prompt = buildConversationSystemPrompt({
+    agent: { agentId: AGENT_ID, personaId: "elysia", displayName: "爱莉希雅", persona: "p" },
+    participant: { participantId: "user_master", displayName: "主人" },
+    relationship: { agentId: AGENT_ID, targetId: "user_master", affinity: 40, updatedAt: "2026-07-26T12:00:00.000Z" },
+    relationshipHistory: [
+      { affinity: 10, at: "2026-07-26T09:00:00.000Z" },
+      { affinity: 25, at: "2026-07-26T10:00:00.000Z" },
+      { affinity: 40, at: "2026-07-26T12:00:00.000Z" },
+    ],
+    memoryHits: [],
+    now: "2026-07-26T13:00:00.000Z",
+  });
+  assert.match(prompt, /Relationship trajectory: your bond with 主人 has moved from 10 to 40 over your recent exchanges\./);
+  assert.match(prompt, /close \(affinity 40/);
+});
+
+test("conversation prompt omits the trajectory when it never moved", async () => {
+  const { buildConversationSystemPrompt } = await import("../src/conversation/conversationPrompt.js");
+  const prompt = buildConversationSystemPrompt({
+    agent: { agentId: AGENT_ID, personaId: "elysia", displayName: "爱莉希雅", persona: "p" },
+    participant: { participantId: "user_master", displayName: "主人" },
+    relationship: { agentId: AGENT_ID, targetId: "user_master", affinity: 40, updatedAt: "2026-07-26T12:00:00.000Z" },
+    relationshipHistory: [
+      { affinity: 40, at: "2026-07-26T09:00:00.000Z" },
+      { affinity: 40, at: "2026-07-26T12:00:00.000Z" },
+    ],
+    memoryHits: [],
+  });
+  assert.ok(!prompt.includes("Relationship trajectory"));
+});
+
+test("host chat writes relationship history on affinity moves", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-reltraj-"));
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人" },
+      agents: [
+        { agentId: AGENT_ID, personaId: "elysia", displayName: "爱莉希雅", persona: "p", routines: [] },
+      ],
+    }),
+  );
+  const state = new RealmStateStore(dir);
+  const runner = {
+    runner: {
+      async run() {
+        return {
+          schemaVersion: "realm-conversation.v1" as const,
+          conversationId: "c1",
+          agentId: AGENT_ID,
+          reply: { content: "好呀" },
+          affect: { analysis: "llm" as const, reason: "x", affinityDelta: 5 },
+          memoryWrites: [],
+        };
+      },
+    },
+  };
+  const host = new RealmHost(state, () => runner.runner, {
+    now: () => new Date(2026, 6, 26, 9, 0, 0),
+  });
+  await host.chat(AGENT_ID, "你好");
+  const history = state.relationshipHistory(AGENT_ID);
+  assert.equal(history.length, 1, "first chat writes one history row");
+});

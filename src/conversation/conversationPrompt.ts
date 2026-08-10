@@ -15,6 +15,8 @@ export interface ConversationPromptInput<Metadata = Record<string, unknown>> {
   agent: RealmConversationAgentV1;
   participant: RealmConversationParticipantV1;
   relationship?: RelationshipAffect;
+  /** Affinity history (oldest first); renders a trajectory line when it moved. */
+  relationshipHistory?: readonly { affinity: number; at: string }[];
   mood?: AgentMood;
   /** Plot-driven emotional state snapshot, when the host tracks one. */
   affect?: AffectState;
@@ -158,7 +160,7 @@ export function personaSections(persona: string | RealmStructuredPersonaV1): str
 export function buildConversationSystemPrompt<Metadata>(
   input: ConversationPromptInput<Metadata>,
 ): string {
-  const { agent, participant, relationship, mood, affect, memoryHits, now, lastTurnAt } = input;
+  const { agent, participant, relationship, relationshipHistory, mood, affect, memoryHits, now, lastTurnAt } = input;
 
   const sections: string[] = [
     `You are ${agent.displayName} (persona ${agent.personaId}), a character living in the Elysian Realm simulation.`,
@@ -180,6 +182,18 @@ export function buildConversationSystemPrompt<Metadata>(
     ? `Relationship with ${participant.displayName}: ${describeAffinity(relationship.affinity)} (affinity ${relationship.affinity} on a -100..100 scale).`
     : `Relationship with ${participant.displayName}: no established relationship yet.`;
   sections.push(`${moodLine}\n${relationshipLine}`);
+
+  // Relationship trajectory: let the reply feel the bond evolving across
+  // exchanges, not just its current level.
+  if (relationshipHistory !== undefined && relationshipHistory.length >= 2) {
+    const first = relationshipHistory[0].affinity;
+    const last = relationshipHistory[relationshipHistory.length - 1].affinity;
+    if (first !== last) {
+      sections.push(
+        `Relationship trajectory: your bond with ${participant.displayName} has moved from ${first} to ${last} over your recent exchanges.`,
+      );
+    }
+  }
 
   if (affect) {
     const affectLines = [`Current emotional state: ${describeAffectState(affect)}.`];
