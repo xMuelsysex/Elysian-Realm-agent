@@ -32,7 +32,7 @@ import {
 import type { RealmAffectProposalV1 } from "../service/realmStepV1.js";
 import { runLifeNarrative } from "./lifeNarrative.js";
 import { detectOocLeak } from "../conversation/oocGuard.js";
-import type { RealmStateStore, RealmStoreStats, RealmPersonaConfig } from "./realmState.js";
+import type { RealmRoutineConfig, RealmStateStore, RealmStoreStats, RealmPersonaConfig } from "./realmState.js";
 
 const CHAT_HISTORY_WINDOW = 20;
 const RELATIONSHIP_HISTORY_WINDOW = 20;
@@ -107,6 +107,36 @@ function personaAffectModifiers(
     return { ...agent.persona.affectModifiers };
   }
   return undefined;
+}
+
+/** Mood band from an affect snapshot's valence; neutral when absent. */
+export function moodBand(affect: AffectState | undefined): "low" | "neutral" | "high" {
+  if (affect === undefined) return "neutral";
+  if (affect.valence < -0.15) return "low";
+  if (affect.valence > 0.15) return "high";
+  return "neutral";
+}
+
+/**
+ * Pick the routine for a period: first candidate whose mood preference
+ * matches the current affect band, else the first fallback in order.
+ * Deterministic; legacy single-routine configs are unchanged.
+ */
+export function selectRoutineForPeriod(
+  routines: readonly RealmRoutineConfig[],
+  period: RealmRoutinePeriodV1,
+  affect: AffectState | undefined,
+): RealmRoutineConfig | undefined {
+  const candidates = routines.filter((entry) => entry.period === period);
+  if (candidates.length === 0) {
+    return undefined;
+  }
+  const band = moodBand(affect);
+  return (
+    candidates.find((entry) => entry.mood === band) ??
+    candidates.find((entry) => entry.mood === undefined) ??
+    candidates[0]
+  );
 }
 
 export class RealmHost {
@@ -336,7 +366,7 @@ export class RealmHost {
     const now = date.toISOString();
     let written = 0;
     for (const agent of this.state.config.agents) {
-      const routine = agent.routines.find((entry) => entry.period === period);
+      const routine = selectRoutineForPeriod(agent.routines, period, this.state.affectState(agent.agentId));
       if (!routine) {
         continue;
       }
@@ -543,7 +573,11 @@ export class RealmHost {
 
     const agents = this.state.config.agents
       .map((agent) => {
-        const routine = agent.routines.find((entry) => entry.period === period);
+        const routine = selectRoutineForPeriod(
+          agent.routines,
+          period,
+          this.state.affectState(agent.agentId),
+        );
         if (!routine) {
           return undefined;
         }

@@ -41,6 +41,12 @@ export interface RealmRoutineConfig {
   period: RealmRoutinePeriodV1;
   locationId: string;
   intent: string;
+  /**
+   * Mood preference: the routine is picked when the agent's affect matches
+   * this band (valence < -0.15 low / > 0.15 high / otherwise neutral).
+   * Absent routines act as fallbacks in declaration order.
+   */
+  mood?: "low" | "neutral" | "high";
 }
 
 /** One scripted plot event to auto-feed when the period rolls over. */
@@ -121,6 +127,12 @@ export const DEFAULT_REALM_CONFIG: RealmConfig = {
       ],
       routines: [
         { period: "morning", locationId: "garden", intent: "在花园里照料向日葵和玫瑰。" },
+        {
+          period: "morning",
+          locationId: "home",
+          intent: "待在家里，安静地整理干花。",
+          mood: "low",
+        },
         { period: "day", locationId: "library", intent: "在图书馆翻看喜欢的诗集。" },
         { period: "evening", locationId: "lakeside", intent: "在湖边散步看晚霞。" },
         { period: "night", locationId: "home", intent: "在家里整理今天的花瓣书签，准备休息。" },
@@ -1065,10 +1077,17 @@ function validateAgent(input: unknown, index: number): RealmPersonaConfig {
           `realm config: agents[${index}].routines[${routineIndex}] needs period, locationId, intent`,
         );
       }
+      const mood = routineRecord.mood;
+      if (mood !== undefined && mood !== "low" && mood !== "neutral" && mood !== "high") {
+        throw new RealmStateError(
+          `realm config: agents[${index}].routines[${routineIndex}].mood must be low, neutral, or high`,
+        );
+      }
       return {
         period: routineRecord.period as RealmRoutinePeriodV1,
         locationId: routineRecord.locationId,
         intent: routineRecord.intent,
+        ...(mood !== undefined ? { mood } : {}),
       };
     }),
     ...(plotScript !== undefined ? { plotScript } : {}),

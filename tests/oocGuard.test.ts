@@ -566,3 +566,102 @@ test("host chat writes relationship history on affinity moves", async () => {
   const history = state.relationshipHistory(AGENT_ID);
   assert.equal(history.length, 1, "first chat writes one history row");
 });
+
+// ── 情绪驱动行为：mood 偏好例程选择 ─────────────────────────────────────
+
+test("selectRoutineForPeriod picks the mood-matching candidate", async () => {
+  const { selectRoutineForPeriod, moodBand } = await import("../src/host/realmHost.js");
+  const { createInitialAffectState } = await import("../src/affect/plotRules.js");
+  const routines = [
+    { period: "morning" as const, locationId: "garden", intent: "照料花" },
+    { period: "morning" as const, locationId: "home", intent: "整理干花", mood: "low" as const },
+  ];
+  const at = "2026-07-26T08:00:00.000Z";
+
+  const lowAffect = createInitialAffectState(AGENT_ID, at, { valence: -0.4, arousal: 0.3 });
+  const highAffect = createInitialAffectState(AGENT_ID, at, { valence: 0.5, arousal: 0.3 });
+  const neutralAffect = createInitialAffectState(AGENT_ID, at, { valence: 0, arousal: 0.3 });
+
+  assert.equal(moodBand(lowAffect), "low");
+  assert.equal(moodBand(highAffect), "high");
+  assert.equal(moodBand(neutralAffect), "neutral");
+  assert.equal(moodBand(undefined), "neutral");
+
+  const lowPick = selectRoutineForPeriod(routines, "morning", lowAffect);
+  assert.equal(lowPick?.locationId, "home", "low mood picks the quiet routine");
+  const highPick = selectRoutineForPeriod(routines, "morning", highAffect);
+  assert.equal(highPick?.locationId, "garden", "high mood falls back to the default");
+  const neutralPick = selectRoutineForPeriod(routines, "morning", neutralAffect);
+  assert.equal(neutralPick?.locationId, "garden");
+  const noAffectPick = selectRoutineForPeriod(routines, "morning", undefined);
+  assert.equal(noAffectPick?.locationId, "garden");
+});
+
+test("legacy single-routine configs select the only candidate", async () => {
+  const { selectRoutineForPeriod } = await import("../src/host/realmHost.js");
+  const { createInitialAffectState } = await import("../src/affect/plotRules.js");
+  const routines = [{ period: "day" as const, locationId: "library", intent: "看书" }];
+  const pick = selectRoutineForPeriod(
+    routines,
+    "day",
+    createInitialAffectState(AGENT_ID, "2026-07-26T12:00:00.000Z", { valence: -0.5, arousal: 0.3 }),
+  );
+  assert.equal(pick?.locationId, "library", "no mood variants means no behavior change");
+});
+
+test("host tick uses the mood-matched routine", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-moodroutine-"));
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人" },
+      agents: [
+        {
+          agentId: AGENT_ID,
+          personaId: "elysia",
+          displayName: "爱莉希雅",
+          persona: "p",
+          routines: [
+            { period: "morning", locationId: "garden", intent: "照料花" },
+            { period: "morning", locationId: "home", intent: "整理干花", mood: "low" },
+          ],
+        },
+      ],
+    }),
+  );
+  const state = new RealmStateStore(dir);
+  let clock = new Date(2026, 6, 26, 8, 0, 0);
+  const host = new RealmHost(state, () => undefined, { now: () => clock });
+  // Two hostile events push valence well below the low band (-0.5).
+  host.plotEvent(AGENT_ID, { type: "hostile_act", target: "host" });
+  host.plotEvent(AGENT_ID, { type: "hostile_act", target: "host" });
+  const affect = state.affectState(AGENT_ID);
+  assert.ok(affect && affect.valence < -0.15, "hostile events leave a low valence");
+
+  await host.tickIfPeriodChanged(); // first morning tick with low mood
+  const memories = state.memoriesFor(AGENT_ID);
+  assert.ok(
+    memories.some((record) => record.content.includes("整理干花")),
+    "low mood tick runs the quiet home routine",
+  );
+});
+
+test("routine mood validation rejects unknown bands", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-badmoodband-"));
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人" },
+      agents: [
+        {
+          agentId: AGENT_ID,
+          personaId: "elysia",
+          displayName: "爱莉希雅",
+          persona: "p",
+          routines: [{ period: "morning", locationId: "garden", intent: "x", mood: "ecstatic" }],
+        },
+      ],
+    }),
+  );
+  assert.throws(() => new RealmStateStore(dir), /mood must be low, neutral, or high/);
+});

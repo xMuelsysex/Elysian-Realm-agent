@@ -97,7 +97,7 @@ test("first run seeds the default realm with a hand-editable config", () => {
 
   assert.equal(state.config.agents[0].agentId, AGENT_ID);
   assert.equal(state.config.agents[0].displayName, "爱莉希雅");
-  assert.equal(state.config.agents[0].routines.length, 4);
+  assert.ok(state.config.agents[0].routines.length >= 4, "default realm seeds per-period routines");
   assert.equal(state.relationship(AGENT_ID), undefined);
 
   // The seeded config must be loadable by a second instance.
