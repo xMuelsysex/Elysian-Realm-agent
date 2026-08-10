@@ -161,6 +161,7 @@ function validatePersona(input: unknown): string | RealmStructuredPersonaV1 {
     baseline = { valence: rawBaseline.valence, arousal: rawBaseline.arousal };
   }
   const affectModifiers = validateAffectModifiers(input.affectModifiers);
+  const emotionResponsiveness = validateEmotionResponsiveness(input.emotionResponsiveness);
   return {
     identity: input.identity as string,
     personality: input.personality as string,
@@ -171,6 +172,7 @@ function validatePersona(input: unknown): string | RealmStructuredPersonaV1 {
     exampleLines: stringArray("exampleLines"),
     ...(baseline !== undefined ? { baseline } : {}),
     ...(affectModifiers !== undefined ? { affectModifiers } : {}),
+    ...(emotionResponsiveness !== undefined ? { emotionResponsiveness } : {}),
   };
 }
 
@@ -198,6 +200,18 @@ function validateAffectModifiers(
     out[type as PlotEventType] = value;
   }
   return out;
+}
+
+function validateEmotionResponsiveness(input: unknown): number | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (typeof input !== "number" || !Number.isFinite(input) || input < 0 || input > 1) {
+    throw new RealmConversationValidationError(
+      "agent.persona.emotionResponsiveness must be a number from 0 to 1",
+    );
+  }
+  return input;
 }
 
 function validateParticipant(input: unknown): RealmConversationParticipantV1 {

@@ -44,6 +44,11 @@ export interface RealmStructuredPersonaV1 {
    * off praise, criticism: 2.0 is wounded deeply). Absent = 1 for all.
    */
   affectModifiers?: Partial<Record<import("../affect/affectRecords.js").PlotEventType, number>>;
+  /**
+   * How strongly conversation emotion nudges the affect snapshot (0..1,
+   * default 0.1): high = emotionally expressive, low = composed.
+   */
+  emotionResponsiveness?: number;
 }
 
 export interface RealmConversationAgentV1 {

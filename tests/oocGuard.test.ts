@@ -718,3 +718,91 @@ test("chat page embeds the latest-reflection renderer", () => {
   assert.ok(CHAT_PAGE_HTML.includes("她最近在想"), "chat page must show the agent's recent reflection");
   assert.ok(CHAT_PAGE_HTML.includes("latestReflection"), "chat page must read latestReflection from the summary");
 });
+
+// ── 情绪外露度：per-character conversation blend ────────────────────────
+
+test("blendConversationEmotion honors a custom rate", async () => {
+  const { blendConversationEmotion } = await import("../src/affect/plotRules.js");
+  const { createInitialAffectState } = await import("../src/affect/plotRules.js");
+  const base = createInitialAffectState(AGENT_ID, "2026-07-26T10:00:00.000Z", { valence: 0, arousal: 0.3 });
+  const emotion = { valence: 0.8, arousal: 0.9 };
+  const at = "2026-07-26T10:01:00.000Z";
+
+  const composed = blendConversationEmotion(base, emotion, at, 0.05);
+  const expressive = blendConversationEmotion(base, emotion, at, 0.3);
+  assert.ok(Math.abs(composed.valence - 0.04) < 1e-9, "low responsiveness barely moves");
+  assert.ok(Math.abs(expressive.valence - 0.24) < 1e-9, "high responsiveness moves further");
+});
+
+test("host chat uses the persona's emotion responsiveness", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-responsiveness-"));
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人" },
+      agents: [
+        {
+          agentId: AGENT_ID,
+          personaId: "elysia",
+          displayName: "爱莉希雅",
+          persona: {
+            identity: "爱莉希雅", personality: "开朗", values: "美好", speechStyle: "轻快",
+            baseline: { valence: 0, arousal: 0.3 },
+            emotionResponsiveness: 0.4,
+          },
+          routines: [],
+        },
+      ],
+    }),
+  );
+  const state = new RealmStateStore(dir);
+  let clock = new Date(2026, 6, 26, 9, 0, 0);
+  const host = new RealmHost(state, () => undefined, { now: () => clock });
+  await host.tickIfPeriodChanged();
+  const before = state.affectState(AGENT_ID);
+  assert.ok(before);
+
+  const emotionRunner = {
+    runner: {
+      async run() {
+        return {
+          schemaVersion: "realm-conversation.v1" as const,
+          conversationId: "c1",
+          agentId: AGENT_ID,
+          reply: { content: "好开心" },
+          affect: { analysis: "llm" as const, reason: "x", emotion: { valence: 0.8, arousal: 0.8 } },
+          memoryWrites: [],
+        };
+      },
+    },
+  };
+  const host2 = new RealmHost(state, () => emotionRunner.runner, { now: () => clock });
+  await host2.chat(AGENT_ID, "讲个开心的");
+  const after = state.affectState(AGENT_ID);
+  assert.ok(after);
+  assert.ok(after.valence > before.valence, "happy chat nudges valence up");
+  assert.ok(after.valence < before.valence + 0.4, "but bounded by the blend weight");
+});
+
+test("emotionResponsiveness validation rejects out-of-range values", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-badresp-"));
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人" },
+      agents: [
+        {
+          agentId: AGENT_ID,
+          personaId: "elysia",
+          displayName: "爱莉希雅",
+          persona: {
+            identity: "爱莉希雅", personality: "开朗", values: "美好", speechStyle: "轻快",
+            emotionResponsiveness: 2,
+          },
+          routines: [],
+        },
+      ],
+    }),
+  );
+  assert.throws(() => new RealmStateStore(dir), /emotionResponsiveness must be a number from 0 to 1/);
+});

@@ -27,6 +27,7 @@ import {
   applyPlotEvents,
   blendConversationEmotion,
   computeAffinityDelta,
+  CONVERSATION_EMOTION_BLEND_RATE,
   createInitialAffectState,
 } from "../affect/plotRules.js";
 import type { RealmAffectProposalV1 } from "../service/realmStepV1.js";
@@ -549,10 +550,16 @@ export class RealmHost {
     const agent = this.state.agent(agentId);
     const current =
       this.state.affectState(agentId) ?? createInitialAffectState(agentId, now, personaBaseline(agent));
+    // Emotional expressiveness is a character trait: the blend weight comes
+    // from the persona (default 0.1), so composed characters barely move.
+    const rate =
+      typeof agent.persona === "object" && agent.persona.emotionResponsiveness !== undefined
+        ? agent.persona.emotionResponsiveness
+        : CONVERSATION_EMOTION_BLEND_RATE;
     this.state.applyAffectProposal(
       agentId,
       {
-        affect: blendConversationEmotion(current, emotion, now),
+        affect: blendConversationEmotion(current, emotion, now, rate),
         affinityDelta: 0,
       },
       now,

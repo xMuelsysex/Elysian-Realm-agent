@@ -246,8 +246,8 @@ export function blendConversationEmotion(
   state: AffectState,
   emotion: { valence: number; arousal: number },
   at: string,
+  rate: number = CONVERSATION_EMOTION_BLEND_RATE,
 ): AffectState {
-  const rate = CONVERSATION_EMOTION_BLEND_RATE;
   return {
     ...state,
     valence: clampNumber(

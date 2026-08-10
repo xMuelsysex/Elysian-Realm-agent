@@ -111,6 +111,7 @@ export const DEFAULT_REALM_CONFIG: RealmConfig = {
         ],
         baseline: { valence: 0.35, arousal: 0.4 },
         affectModifiers: { praise: 1.3, criticism: 0.8 },
+        emotionResponsiveness: 0.15,
       },
       plotScript: [
         {
@@ -163,6 +164,7 @@ export const DEFAULT_REALM_CONFIG: RealmConfig = {
         ],
         baseline: { valence: 0.0, arousal: 0.2 },
         affectModifiers: { praise: 0.4, criticism: 1.6 },
+        emotionResponsiveness: 0.05,
       },
       routines: [
         { period: "morning", locationId: "lab", intent: "在实验室整理昨夜的数据记录。" },
@@ -1013,6 +1015,7 @@ function validatePersona(input: unknown, index: number): string | RealmStructure
     baseline = { valence: b.valence, arousal: b.arousal };
   }
   const affectModifiers = validateAffectModifiers(record.affectModifiers, index);
+  const emotionResponsiveness = validateEmotionResponsiveness(record.emotionResponsiveness, index);
   return {
     identity: record.identity as string,
     personality: record.personality as string,
@@ -1023,6 +1026,7 @@ function validatePersona(input: unknown, index: number): string | RealmStructure
     exampleLines: stringArray("exampleLines"),
     ...(baseline !== undefined ? { baseline } : {}),
     ...(affectModifiers !== undefined ? { affectModifiers } : {}),
+    ...(emotionResponsiveness !== undefined ? { emotionResponsiveness } : {}),
   };
 }
 
@@ -1052,6 +1056,18 @@ function validateAffectModifiers(
     out[type as PlotEventType] = value;
   }
   return out;
+}
+
+function validateEmotionResponsiveness(input: unknown, index: number): number | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (typeof input !== "number" || !Number.isFinite(input) || input < 0 || input > 1) {
+    throw new RealmStateError(
+      `realm config: agents[${index}].persona.emotionResponsiveness must be a number from 0 to 1`,
+    );
+  }
+  return input;
 }
 
 function validateAgent(input: unknown, index: number): RealmPersonaConfig {
