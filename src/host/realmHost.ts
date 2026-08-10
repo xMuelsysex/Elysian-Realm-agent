@@ -332,7 +332,8 @@ export class RealmHost {
         .map((record) => record.content);
 
       // Stamp the agent's current affect onto the narrative memory so the
-      // tick track also carries an emotional signature (affect.md candidate).
+      // tick track also carries an emotional signature (affect.md candidate),
+      // and inject it into the diary prompt so the mood colors the writing.
       const affect = this.state.affectState(agent.agentId);
       const result = await runLifeNarrative(llm, {
         agentId: agent.agentId,
@@ -343,9 +344,7 @@ export class RealmHost {
         intent: routine.intent,
         now,
         recentNarratives,
-        ...(affect !== undefined
-          ? { emotion: { valence: affect.valence, arousal: affect.arousal } }
-          : {}),
+        ...(affect !== undefined ? { affect, emotion: { valence: affect.valence, arousal: affect.arousal } } : {}),
       });
       if ("write" in result) {
         this.state.applyMemoryWrites(agent.agentId, [result.write]);

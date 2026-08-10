@@ -7,7 +7,8 @@
 
 import type { LlmPort, LlmRequestOptionsLike } from "../ports/ports.js";
 import type { EmotionSignature, MemoryWrite } from "../memory/memoryRecords.js";
-import { personaSections } from "../conversation/conversationPrompt.js";
+import { personaSections, describeAffectState } from "../conversation/conversationPrompt.js";
+import type { AffectState } from "../affect/affectRecords.js";
 import type { RealmStructuredPersonaV1 } from "../service/realmConversationV1.js";
 import type { RealmMemoryMetadataV1, RealmRoutinePeriodV1 } from "../service/realmStepV1.js";
 
@@ -25,6 +26,8 @@ export interface LifeNarrativeInput {
   recentNarratives?: readonly string[];
   /** How the agent feels right now, stamped onto the narrative memory. */
   emotion?: EmotionSignature;
+  /** Current affect snapshot; injected so the diary matches the mood. */
+  affect?: AffectState;
 }
 
 export function buildLifeNarrativeMessages(input: LifeNarrativeInput): {
@@ -43,6 +46,9 @@ export function buildLifeNarrativeMessages(input: LifeNarrativeInput): {
     ].join("\n"),
     user: [
       `Time of day: ${input.period}. Place: ${input.locationId}. Activity: ${input.intent}`,
+      ...(input.affect !== undefined
+        ? [`Your current emotional state: ${describeAffectState(input.affect)}.`]
+        : []),
       ...(input.recentNarratives && input.recentNarratives.length > 0
         ? ["Recent moments:", ...input.recentNarratives.map((entry) => `- ${entry}`)]
         : []),
