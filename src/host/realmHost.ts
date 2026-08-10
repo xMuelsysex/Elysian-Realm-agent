@@ -29,6 +29,7 @@ import {
 } from "../affect/plotRules.js";
 import type { RealmAffectProposalV1 } from "../service/realmStepV1.js";
 import { runLifeNarrative } from "./lifeNarrative.js";
+import { detectOocLeak } from "../conversation/oocGuard.js";
 import type { RealmStateStore, RealmStoreStats } from "./realmState.js";
 
 const CHAT_HISTORY_WINDOW = 20;
@@ -77,6 +78,14 @@ export function periodOf(hour: number): RealmRoutinePeriodV1 {
   if (hour >= 11 && hour < 17) return "day";
   if (hour >= 17 && hour < 22) return "evening";
   return "night";
+}
+
+/** Append an OOC-leak annotation to the analysis reason when detected. */
+function annotatedReason(reason: string | undefined, reply: string): string {
+  const leak = detectOocLeak(reply);
+  if (leak === undefined) return reason ?? "";
+  const base = reason && reason.trim().length > 0 ? reason : "no analysis detail";
+  return `${base}; ooc-leak: ${leak}`;
 }
 
 export class RealmHost {
@@ -181,7 +190,7 @@ export class RealmHost {
       affinity: applied.affinity,
       mood: applied.mood,
       analysis: response.affect.analysis,
-      analysisReason: response.affect.reason,
+      analysisReason: annotatedReason(response.affect.reason, response.reply.content),
     };
   }
 
@@ -260,7 +269,7 @@ export class RealmHost {
       affinity: applied.affinity,
       mood: applied.mood,
       analysis: response.affect.analysis,
-      analysisReason: response.affect.reason,
+      analysisReason: annotatedReason(response.affect.reason, response.reply.content),
     };
   }
 
