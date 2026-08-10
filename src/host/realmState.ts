@@ -226,6 +226,7 @@ export interface RealmStoreStats {
     memories: number;
     conversationTurns: number;
     relationships: number;
+    relationshipHistoryRows: number;
     moods: number;
     affectStates: number;
     staleMemories: number;
@@ -341,6 +342,11 @@ export class RealmStateStore {
     this.config = this.loadConfig();
     this.db = new DatabaseSync(join(dataDir, "realm.sqlite"));
     this.db.exec(SCHEMA_SQL);
+    // Relationship history is queried by time window; keep it indexed so
+    // long-running realms stay fast as the log grows (pruning is governance).
+    this.db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_relationship_history_at ON relationship_history(at)",
+    );
     this.migrateLegacyJson();
     this.loadState();
   }
@@ -434,12 +440,16 @@ export class RealmStateStore {
     const affectStates = this.config.agents.filter(
       (agent) => this.affect.getAffectState(agent.agentId) !== undefined,
     ).length;
+    const relationshipHistoryRows = (
+      this.db.prepare("SELECT COUNT(*) AS n FROM relationship_history").get() as { n: number }
+    ).n;
     return {
       agents,
       totals: {
         memories: agents.reduce((total, agent) => total + agent.memories, 0),
         conversationTurns: agents.reduce((total, agent) => total + agent.conversationTurns, 0),
         relationships,
+        relationshipHistoryRows,
         moods,
         affectStates,
         staleMemories: agents.reduce((total, agent) => total + agent.staleMemories, 0),

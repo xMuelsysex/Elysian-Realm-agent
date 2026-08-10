@@ -1229,3 +1229,36 @@ test("in-character narratives produce no OOC notes", async () => {
     "clean narrative produces no OOC notes",
   );
 });
+
+// ── relationship_history 治理准备（索引 + stats）────────────────────────
+
+test("relationship history is indexed by time and counted in stats", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-rehist-index-"));
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人" },
+      agents: [
+        { agentId: AGENT_ID, personaId: "elysia", displayName: "爱莉希雅", persona: "p", routines: [] },
+      ],
+    }),
+  );
+  const state = new RealmStateStore(dir);
+  const host = new RealmHost(state, () => fakeRunner("你好", 3).runner, {
+    now: () => new Date(2026, 6, 26, 9, 0, 0),
+  });
+  await host.chat(AGENT_ID, "你好");
+  await host.chat(AGENT_ID, "再聊");
+
+  const stats = state.stats("2026-07-26T12:00:00.000Z");
+  assert.equal(stats.totals.relationshipHistoryRows, 2, "stats count the history rows");
+
+  // The index must exist so time-window queries stay fast long-term.
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(join(dir, "realm.sqlite"));
+  const index = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_relationship_history_at'")
+    .get();
+  db.close();
+  assert.ok(index, "relationship history index exists");
+});
