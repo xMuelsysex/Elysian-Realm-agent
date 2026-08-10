@@ -219,6 +219,33 @@ try {
   );
   if (res2.status !== 200) exitCode = 1;
 
+  // ── multi-agent: the second persona must exist and chat standalone ────
+  const stateRes = await fetch(`http://127.0.0.1:${port}/v1/host/state`);
+  const stateBody = await stateRes.json();
+  const mobius = (stateBody.agents ?? []).find((entry) => entry.agentId === "agent_mobius");
+  results.push(
+    stateRes.status === 200 && mobius !== undefined && mobius.displayName === "梅比乌斯"
+      ? "PASS second persona (梅比乌斯) is listed"
+      : `FAIL second persona missing: ${JSON.stringify(stateBody).slice(0, 120)}`,
+  );
+  if (stateRes.status !== 200 || mobius === undefined) exitCode = 1;
+
+  const resMobius = await fetch(`http://127.0.0.1:${port}/v1/host/chat`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ agentId: "agent_mobius", content: "今天观察到了什么？" }),
+  });
+  const bodyMobius = await resMobius.json();
+  const mobiusHist = await fetch(`http://127.0.0.1:${port}/v1/host/history/agent_mobius`);
+  const mobiusTurns = (await mobiusHist.json()).turns ?? [];
+  results.push(
+    resMobius.status === 200 && typeof bodyMobius.reply === "string" && bodyMobius.reply.length > 0 &&
+      mobiusHist.status === 200 && mobiusTurns.length >= 2
+      ? `PASS 梅比乌斯 chat + history persists (${mobiusTurns.length} turns)`
+      : `FAIL 梅比乌斯 chat: status=${resMobius.status} turns=${mobiusTurns.length}`,
+  );
+  if (resMobius.status !== 200 || mobiusTurns.length < 2) exitCode = 1;
+
   // ── metrics ───────────────────────────────────────────────────────────
   const now = new Date();
   if (firstDeltaMs !== null) {
