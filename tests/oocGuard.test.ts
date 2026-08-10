@@ -169,5 +169,86 @@ test("host feeds no scripted events without a plot script", async () => {
   const host = new RealmHost(state, () => undefined, { now: () => clock });
   const first = await host.tickIfPeriodChanged();
   assert.ok(first);
-  assert.equal(state.affectState(AGENT_ID), undefined, "no script means no affect state");
+  const affect = state.affectState(AGENT_ID);
+  assert.ok(affect, "tick initializes an affect state");
+  assert.equal(affect.valence, 0.2, "no baseline means the engine default");
+  assert.equal(affect.arousal, 0.3);
+  assert.equal(affect.emotionLabels.anger, 0, "no script means no event labels");
+});
+
+test("tick initializes affect at the character's temperament baseline", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-baseline-"));
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人" },
+      agents: [
+        {
+          agentId: AGENT_ID,
+          personaId: "elysia",
+          displayName: "爱莉希雅",
+          persona: {
+            identity: "爱莉希雅",
+            personality: "开朗",
+            values: "美好",
+            speechStyle: "轻快",
+            baseline: { valence: 0.5, arousal: 0.6 },
+          },
+          routines: [
+            { period: "morning", locationId: "garden", intent: "照料花" },
+            { period: "day", locationId: "library", intent: "看书" },
+          ],
+        },
+      ],
+    }),
+  );
+  const state = new RealmStateStore(dir);
+  let clock = new Date(2026, 6, 26, 9, 0, 0);
+  const host = new RealmHost(state, () => undefined, { now: () => clock });
+  await host.tickIfPeriodChanged();
+  const affect = state.affectState(AGENT_ID);
+  assert.ok(affect);
+  assert.equal(affect.valence, 0.5, "initial state anchors at the character baseline");
+  assert.equal(affect.arousal, 0.6);
+  assert.deepEqual(affect.baseline, { valence: 0.5, arousal: 0.6 });
+
+  // A plot shock moves away, then a later tick decays toward the character's
+  // own baseline — not the shared engine default.
+  let clock2 = new Date(2026, 6, 26, 10, 0, 0);
+  const host2 = new RealmHost(state, () => undefined, { now: () => clock2 });
+  host2.plotEvent(AGENT_ID, { type: "hostile_act", target: "host" });
+  const shocked = state.affectState(AGENT_ID);
+  assert.ok(shocked && shocked.valence < 0.5);
+
+  clock2 = new Date(2026, 6, 26, 14, 0, 0);
+  await host2.tickIfPeriodChanged();
+  const settled = state.affectState(AGENT_ID);
+  assert.ok(settled && settled.valence > shocked.valence, "valence regresses toward the character baseline");
+  assert.deepEqual(settled.baseline, { valence: 0.5, arousal: 0.6 });
+});
+
+test("persona baseline validation rejects out-of-range values", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-badbaseline-"));
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人" },
+      agents: [
+        {
+          agentId: AGENT_ID,
+          personaId: "elysia",
+          displayName: "爱莉希雅",
+          persona: {
+            identity: "爱莉希雅",
+            personality: "开朗",
+            values: "美好",
+            speechStyle: "轻快",
+            baseline: { valence: 2, arousal: 0.5 },
+          },
+          routines: [],
+        },
+      ],
+    }),
+  );
+  assert.throws(() => new RealmStateStore(dir), /baseline needs valence -1\.\.1 and arousal 0\.\.1/);
 });

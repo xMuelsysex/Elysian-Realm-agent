@@ -120,6 +120,20 @@ function validatePersona(input: unknown): string | RealmStructuredPersonaV1 {
     }
     return value;
   };
+  let baseline: { valence: number; arousal: number } | undefined;
+  const rawBaseline = input.baseline;
+  if (rawBaseline !== undefined) {
+    if (!isRecord(rawBaseline)) {
+      throw new RealmConversationValidationError("agent.persona.baseline must be an object");
+    }
+    if (
+      typeof rawBaseline.valence !== "number" || rawBaseline.valence < -1 || rawBaseline.valence > 1 ||
+      typeof rawBaseline.arousal !== "number" || rawBaseline.arousal < 0 || rawBaseline.arousal > 1
+    ) {
+      throw new RealmConversationValidationError("agent.persona.baseline needs valence -1..1 and arousal 0..1");
+    }
+    baseline = { valence: rawBaseline.valence, arousal: rawBaseline.arousal };
+  }
   return {
     identity: input.identity as string,
     personality: input.personality as string,
@@ -128,6 +142,7 @@ function validatePersona(input: unknown): string | RealmStructuredPersonaV1 {
     boundaries: stringArray("boundaries"),
     behaviorTraits: stringArray("behaviorTraits"),
     exampleLines: stringArray("exampleLines"),
+    ...(baseline !== undefined ? { baseline } : {}),
   };
 }
 

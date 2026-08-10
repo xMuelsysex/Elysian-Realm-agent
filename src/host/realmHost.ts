@@ -22,6 +22,7 @@ import { executeRealmAgentStepV1 } from "../service/realmStepExecutor.js";
 import { runReflection } from "../reflection/reflectionPlanner.js";
 import { createLlmReflectionPlanner } from "../reflection/llmReflectionPlanner.js";
 import type { AffectState, AgentMood, PlotEvent, PlotEventTarget, PlotEventType } from "../affect/affectRecords.js";
+import { AFFECT_DEFAULT_BASELINE } from "../affect/affectRecords.js";
 import {
   applyPlotEvents,
   computeAffinityDelta,
@@ -30,7 +31,7 @@ import {
 import type { RealmAffectProposalV1 } from "../service/realmStepV1.js";
 import { runLifeNarrative } from "./lifeNarrative.js";
 import { detectOocLeak } from "../conversation/oocGuard.js";
-import type { RealmStateStore, RealmStoreStats } from "./realmState.js";
+import type { RealmStateStore, RealmStoreStats, RealmPersonaConfig } from "./realmState.js";
 
 const CHAT_HISTORY_WINDOW = 20;
 const NARRATIVE_CONTINUITY_WINDOW = 3;
@@ -86,6 +87,14 @@ function annotatedReason(reason: string | undefined, reply: string): string {
   if (leak === undefined) return reason ?? "";
   const base = reason && reason.trim().length > 0 ? reason : "no analysis detail";
   return `${base}; ooc-leak: ${leak}`;
+}
+
+/** The character's temperament baseline, or the engine default when absent. */
+function personaBaseline(agent: RealmPersonaConfig): { valence: number; arousal: number } {
+  if (typeof agent.persona === "object" && agent.persona.baseline !== undefined) {
+    return { ...agent.persona.baseline };
+  }
+  return { ...AFFECT_DEFAULT_BASELINE };
 }
 
 export class RealmHost {
@@ -290,12 +299,11 @@ export class RealmHost {
     if (last && last.date === localDate && last.period === period) {
       return undefined;
     }
+    this.ensureAffectInitialized(date);
     const added = this.runTick(period, date);
     this.runScriptedPlot(period, date);
     this.state.setTickState({ date: localDate, period });
-
-    const notes: string[] = [];
-    const narratives = await this.runNarratives(period, date, notes);
+    const notes: string[] = [];    const narratives = await this.runNarratives(period, date, notes);
     const reflections = period === "night" ? await this.runDailyReflection(date, notes) : 0;
 
     return { period, added, narratives, reflections, notes };
@@ -429,13 +437,34 @@ export class RealmHost {
       at,
     };
     const current =
-      this.state.affectState(agentId) ?? createInitialAffectState(agentId, at);
+      this.state.affectState(agentId) ?? createInitialAffectState(agentId, at, personaBaseline(this.state.agent(agentId)));
     const proposal: RealmAffectProposalV1 = {
       affect: applyPlotEvents(current, [event], at),
       affinityDelta: computeAffinityDelta([event]),
     };
     this.state.applyAffectProposal(agentId, proposal, at);
     return proposal.affect;
+  }
+
+  /**
+   * Give every agent an affect state on first tick, anchored at the
+   * character's temperament baseline (ACT fundamental sentiments) so decay
+   * regresses toward their own disposition, not a shared default.
+   */
+  private ensureAffectInitialized(date: Date): void {
+    const now = date.toISOString();
+    for (const agent of this.state.config.agents) {
+      if (this.state.affectState(agent.agentId) === undefined) {
+        this.state.applyAffectProposal(
+          agent.agentId,
+          {
+            affect: createInitialAffectState(agent.agentId, now, personaBaseline(agent)),
+            affinityDelta: 0,
+          },
+          now,
+        );
+      }
+    }
   }
 
   /** Feed each agent's scripted plot events for this period, if configured. */

@@ -34,6 +34,11 @@ export interface RealmStructuredPersonaV1 {
   behaviorTraits: readonly string[];
   /** A few in-voice sample lines anchoring the style (few-shot). */
   exampleLines: readonly string[];
+  /**
+   * Temperament baseline (ACT fundamental sentiments): where the affect
+   * state decays back to. Absent means the engine default (0.2 / 0.3).
+   */
+  baseline?: { valence: number; arousal: number };
 }
 
 export interface RealmConversationAgentV1 {

@@ -101,6 +101,7 @@ export const DEFAULT_REALM_CONFIG: RealmConfig = {
           "「主人又来看我啦？真好♪」",
           "「上次的约定，我可一直记着呢♪」",
         ],
+        baseline: { valence: 0.35, arousal: 0.4 },
       },
       plotScript: [
         {
@@ -145,6 +146,7 @@ export const DEFAULT_REALM_CONFIG: RealmConfig = {
           "「实验记录上说，你今天的表现值得观察。」",
           "「别急着回答，让我先想想。」",
         ],
+        baseline: { valence: 0.0, arousal: 0.2 },
       },
       routines: [
         { period: "morning", locationId: "lab", intent: "在实验室整理昨夜的数据记录。" },
@@ -938,6 +940,23 @@ function validatePersona(input: unknown, index: number): string | RealmStructure
     }
     return value;
   };
+  let baseline: { valence: number; arousal: number } | undefined;
+  const rawBaseline = record.baseline;
+  if (rawBaseline !== undefined) {
+    if (typeof rawBaseline !== "object" || rawBaseline === null) {
+      throw new RealmStateError(`realm config: agents[${index}].persona.baseline must be an object`);
+    }
+    const b = rawBaseline as Record<string, unknown>;
+    if (
+      typeof b.valence !== "number" || b.valence < -1 || b.valence > 1 ||
+      typeof b.arousal !== "number" || b.arousal < 0 || b.arousal > 1
+    ) {
+      throw new RealmStateError(
+        `realm config: agents[${index}].persona.baseline needs valence -1..1 and arousal 0..1`,
+      );
+    }
+    baseline = { valence: b.valence, arousal: b.arousal };
+  }
   return {
     identity: record.identity as string,
     personality: record.personality as string,
@@ -946,6 +965,7 @@ function validatePersona(input: unknown, index: number): string | RealmStructure
     boundaries: stringArray("boundaries"),
     behaviorTraits: stringArray("behaviorTraits"),
     exampleLines: stringArray("exampleLines"),
+    ...(baseline !== undefined ? { baseline } : {}),
   };
 }
 

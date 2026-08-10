@@ -188,7 +188,9 @@ test("host plot events move emotion and affinity, and persist across restarts", 
   const host = new RealmHost(store, () => undefined, { now: () => clock });
 
   const after = host.plotEvent(AGENT_ID, { type: "hostile_act", target: "host" });
-  assert.equal(after.valence, 0.2 - 0.35);
+  const persona = store.agent(AGENT_ID).persona;
+  assert.ok(typeof persona === "object" && persona.baseline !== undefined, "default persona carries a temperament baseline");
+  assert.equal(after.valence, persona.baseline.valence - 0.35);
   assert.ok(after.emotionLabels.anger >= 0.6);
   assert.equal(store.relationship(AGENT_ID)?.affinity, -5);
 
