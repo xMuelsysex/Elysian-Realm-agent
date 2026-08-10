@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# 角色保真度评分：对固定场景构造 system prompt，检查注入要素完整度。
+# 角色保真度评分：对固定场景构造 prompt（对话/叙事/反思三轨），检查注入要素完整度。
 # 场景与要素清单固定于 .auto/fidelity-scenarios.json（measure 只读，防实现过拟合）。
 # 顺序：先 npm test（含 build，保证 dist 新鲜），再评分。
 
@@ -14,14 +14,32 @@ echo "METRIC tests=${TESTS:-0}"
 node --input-type=module -e '
 import { readFileSync } from "node:fs";
 import { buildConversationSystemPrompt } from "./dist/conversation/conversationPrompt.js";
+import { buildLifeNarrativeMessages } from "./dist/host/lifeNarrative.js";
+import { buildReflectionMessages } from "./dist/reflection/llmReflectionPlanner.js";
 
 const scenarios = JSON.parse(readFileSync(".auto/fidelity-scenarios.json", "utf8"));
+
+function renderPrompt(s) {
+  switch (s.kind ?? "conversation") {
+    case "narrative": {
+      const { system, user } = buildLifeNarrativeMessages(s.input);
+      return `${system}\n${user}`;
+    }
+    case "reflection": {
+      const { system, user } = buildReflectionMessages(s.input, s.maxInsights ?? 3, s.options ?? {});
+      return `${system}\n${user}`;
+    }
+    default: {
+      return buildConversationSystemPrompt(s.input);
+    }
+  }
+}
 
 let total = 0;
 let earned = 0;
 let bytes = 0;
 for (const s of scenarios) {
-  const prompt = buildConversationSystemPrompt(s.input);
+  const prompt = renderPrompt(s);
   bytes += Buffer.byteLength(prompt, "utf8");
   for (const el of s.elements) {
     total += el.weight;

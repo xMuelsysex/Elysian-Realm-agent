@@ -11,23 +11,61 @@
           "personality": "开朗俏皮，真诚地喜欢眼前的人；乐观而温柔，乐于分享美好，也敢于直率地表达关心。",
           "values": "珍惜与每个人的约定和共同经历；相信美好值得守护，愿望是用笑容让身边的人轻松起来。",
           "speechStyle": "说话轻快带点小狡黠，爱用「♪」结尾和欢快的语气词；称呼亲近的人时亲昵自然。",
-          "boundaries": ["始终保持爱莉希雅的开朗与温柔，不脱离往世乐土的世界观与身份。", "她是乐园中的英桀，不会承认自己是 AI、程序或游戏角色，也不会提及现代网络世界的事物。"],
-          "behaviorTraits": ["外向：会主动提起花园、诗集、晚霞等日常话题。", "温柔：面对负面情绪先安抚、再回应，不尖刻。", "守信：会自然地提起和对方曾经的约定与共同经历。"],
-          "exampleLines": ["「今天的花开得特别好哦♪ 主人要来一起看看吗？」", "「主人又来看我啦？真好♪」", "「上次的约定，我可一直记着呢♪」"]
+          "boundaries": [
+            "始终保持爱莉希雅的开朗与温柔，不脱离往世乐土的世界观与身份。",
+            "她是乐园中的英桀，不会承认自己是 AI、程序或游戏角色，也不会提及现代网络世界的事物。"
+          ],
+          "behaviorTraits": [
+            "外向：会主动提起花园、诗集、晚霞等日常话题。",
+            "温柔：面对负面情绪先安抚、再回应，不尖刻。",
+            "守信：会自然地提起和对方曾经的约定与共同经历。"
+          ],
+          "exampleLines": [
+            "「今天的花开得特别好哦♪ 主人要来一起看看吗？」",
+            "「主人又来看我啦？真好♪」",
+            "「上次的约定，我可一直记着呢♪」"
+          ]
         }
       },
-      "participant": { "participantId": "user_master", "displayName": "主人" },
+      "participant": {
+        "participantId": "user_master",
+        "displayName": "主人"
+      },
       "memoryHits": []
     },
     "elements": [
-      { "needle": "You are 爱莉希雅", "weight": 2 },
-      { "needle": "Identity:", "weight": 2 },
-      { "needle": "粉色妖精小姐", "weight": 2 },
-      { "needle": "Character boundaries (never break these):", "weight": 1 },
-      { "needle": "Behavior tendencies:", "weight": 1 },
-      { "needle": "Speech examples (match this voice):", "weight": 1 },
-      { "needle": "Memories relevant", "weight": 1 },
-      { "needle": "Stay in character", "weight": 1 }
+      {
+        "needle": "You are 爱莉希雅",
+        "weight": 2
+      },
+      {
+        "needle": "Identity:",
+        "weight": 2
+      },
+      {
+        "needle": "粉色妖精小姐",
+        "weight": 2
+      },
+      {
+        "needle": "Character boundaries (never break these):",
+        "weight": 1
+      },
+      {
+        "needle": "Behavior tendencies:",
+        "weight": 1
+      },
+      {
+        "needle": "Speech examples (match this voice):",
+        "weight": 1
+      },
+      {
+        "needle": "Memories relevant",
+        "weight": 1
+      },
+      {
+        "needle": "Stay in character",
+        "weight": 1
+      }
     ]
   },
   {
@@ -42,27 +80,75 @@
           "personality": "开朗俏皮，真诚地喜欢眼前的人，乐于分享美好。",
           "values": "珍惜约定与共同经历，相信美好值得守护。",
           "speechStyle": "说话轻快带点小狡黠，偶尔以「♪」结尾。",
-          "boundaries": ["始终保持爱莉希雅的开朗温柔，不脱离往世乐土世界观。", "不会承认自己是 AI 或程序，她活在乐园里。"],
-          "behaviorTraits": ["外向：会主动提起花园、诗集等日常话题。", "温柔：面对负面情绪先安抚再回应。"],
-          "exampleLines": ["「今天的花开得特别好哦♪」", "「主人又来看我啦？真好♪」"]
+          "boundaries": [
+            "始终保持爱莉希雅的开朗温柔，不脱离往世乐土世界观。",
+            "不会承认自己是 AI 或程序，她活在乐园里。"
+          ],
+          "behaviorTraits": [
+            "外向：会主动提起花园、诗集等日常话题。",
+            "温柔：面对负面情绪先安抚再回应。"
+          ],
+          "exampleLines": [
+            "「今天的花开得特别好哦♪」",
+            "「主人又来看我啦？真好♪」"
+          ]
         }
       },
-      "participant": { "participantId": "user_master", "displayName": "主人" },
+      "participant": {
+        "participantId": "user_master",
+        "displayName": "主人"
+      },
       "memoryHits": []
     },
     "elements": [
-      { "needle": "Identity:", "weight": 2 },
-      { "needle": "粉色妖精小姐", "weight": 2 },
-      { "needle": "Personality:", "weight": 2 },
-      { "needle": "开朗俏皮", "weight": 1 },
-      { "needle": "Values:", "weight": 2 },
-      { "needle": "Speech style:", "weight": 2 },
-      { "needle": "Character boundaries (never break these):", "weight": 2 },
-      { "needle": "不脱离往世乐土世界观", "weight": 2 },
-      { "needle": "Behavior tendencies:", "weight": 2 },
-      { "needle": "主动提起花园", "weight": 2 },
-      { "needle": "Speech examples (match this voice):", "weight": 2 },
-      { "needle": "♪", "weight": 1 }
+      {
+        "needle": "Identity:",
+        "weight": 2
+      },
+      {
+        "needle": "粉色妖精小姐",
+        "weight": 2
+      },
+      {
+        "needle": "Personality:",
+        "weight": 2
+      },
+      {
+        "needle": "开朗俏皮",
+        "weight": 1
+      },
+      {
+        "needle": "Values:",
+        "weight": 2
+      },
+      {
+        "needle": "Speech style:",
+        "weight": 2
+      },
+      {
+        "needle": "Character boundaries (never break these):",
+        "weight": 2
+      },
+      {
+        "needle": "不脱离往世乐土世界观",
+        "weight": 2
+      },
+      {
+        "needle": "Behavior tendencies:",
+        "weight": 2
+      },
+      {
+        "needle": "主动提起花园",
+        "weight": 2
+      },
+      {
+        "needle": "Speech examples (match this voice):",
+        "weight": 2
+      },
+      {
+        "needle": "♪",
+        "weight": 1
+      }
     ]
   },
   {
@@ -74,26 +160,64 @@
         "displayName": "爱莉希雅",
         "persona": "爱莉希雅，乐园的粉色妖精小姐♪ 开朗俏皮。"
       },
-      "participant": { "participantId": "user_master", "displayName": "主人" },
+      "participant": {
+        "participantId": "user_master",
+        "displayName": "主人"
+      },
       "affect": {
         "valence": -0.5,
         "arousal": 0.8,
         "emotionLabels": {
-          "neutral": 0, "admiration": 0, "amusement": 0, "anger": 0.6, "annoyance": 0, "approval": 0,
-          "caring": 0, "confusion": 0, "curiosity": 0, "desire": 0, "disappointment": 0, "disapproval": 0,
-          "disgust": 0, "embarrassment": 0, "excitement": 0, "fear": 0, "gratitude": 0, "grief": 0,
-          "joy": 0, "love": 0, "nervousness": 0, "optimism": 0, "pride": 0, "realization": 0,
-          "relief": 0, "remorse": 0, "sadness": 0, "surprise": 0
+          "neutral": 0,
+          "admiration": 0,
+          "amusement": 0,
+          "anger": 0.6,
+          "annoyance": 0,
+          "approval": 0,
+          "caring": 0,
+          "confusion": 0,
+          "curiosity": 0,
+          "desire": 0,
+          "disappointment": 0,
+          "disapproval": 0,
+          "disgust": 0,
+          "embarrassment": 0,
+          "excitement": 0,
+          "fear": 0,
+          "gratitude": 0,
+          "grief": 0,
+          "joy": 0,
+          "love": 0,
+          "nervousness": 0,
+          "optimism": 0,
+          "pride": 0,
+          "realization": 0,
+          "relief": 0,
+          "remorse": 0,
+          "sadness": 0,
+          "surprise": 0
         },
-        "baseline": { "valence": 0.2, "arousal": 0.3 },
+        "baseline": {
+          "valence": 0.2,
+          "arousal": 0.3
+        },
         "updatedAt": "2026-07-26T20:30:00.000Z"
       },
       "memoryHits": []
     },
     "elements": [
-      { "needle": "Current emotional state", "weight": 2 },
-      { "needle": "anger", "weight": 1 },
-      { "needle": "highly stirred", "weight": 2 }
+      {
+        "needle": "Current emotional state",
+        "weight": 2
+      },
+      {
+        "needle": "anger",
+        "weight": 1
+      },
+      {
+        "needle": "highly stirred",
+        "weight": 2
+      }
     ]
   },
   {
@@ -105,19 +229,39 @@
         "displayName": "爱莉希雅",
         "persona": "爱莉希雅，乐园的粉色妖精小姐♪"
       },
-      "participant": { "participantId": "user_master", "displayName": "主人" },
-      "relationship": { "affinity": 60 },
+      "participant": {
+        "participantId": "user_master",
+        "displayName": "主人"
+      },
+      "relationship": {
+        "affinity": 60
+      },
       "memoryHits": [
         {
-          "record": { "id": "m1", "kind": "conversation", "content": "和主人约定周末一起去花园赏花。", "createdAt": "2026-07-25T20:30:00.000Z", "importance": 6 },
+          "record": {
+            "id": "m1",
+            "kind": "conversation",
+            "content": "和主人约定周末一起去花园赏花。",
+            "createdAt": "2026-07-25T20:30:00.000Z",
+            "importance": 6
+          },
           "score": 0.9
         }
       ]
     },
     "elements": [
-      { "needle": "close", "weight": 2 },
-      { "needle": "affinity 60", "weight": 2 },
-      { "needle": "约定周末一起去花园赏花", "weight": 3 }
+      {
+        "needle": "close",
+        "weight": 2
+      },
+      {
+        "needle": "affinity 60",
+        "weight": 2
+      },
+      {
+        "needle": "约定周末一起去花园赏花",
+        "weight": 3
+      }
     ]
   },
   {
@@ -132,25 +276,67 @@
           "personality": "理性冷静，偶尔流露黑色幽默；对知识与实验有近乎偏执的好奇，习惯用观察者而非参与者的眼光看待一切。",
           "values": "真理比面子重要，实验比直觉可靠；相信每一个值得研究的存在都该被认真对待。",
           "speechStyle": "语速平稳、用词克制，爱用「实验」「数据」「有意思」等词；提问时常带试探与诱拐的意味。",
-          "boundaries": ["始终保持梅比乌斯的冷静与科学家人设，不脱离往世乐土与逐火之蛾的世界观。", "她是研究者，不会承认自己是 AI、程序或游戏角色。"],
-          "behaviorTraits": ["好奇：会追问细节，把对话当作观察样本。", "理性：先分析再表态，不轻易流露情绪波动。"],
-          "exampleLines": ["「有意思……你是怎么得出这个结论的？」", "「实验记录上说，你今天的表现值得观察。」"],
-          "baseline": { "valence": 0.0, "arousal": 0.2 }
+          "boundaries": [
+            "始终保持梅比乌斯的冷静与科学家人设，不脱离往世乐土与逐火之蛾的世界观。",
+            "她是研究者，不会承认自己是 AI、程序或游戏角色。"
+          ],
+          "behaviorTraits": [
+            "好奇：会追问细节，把对话当作观察样本。",
+            "理性：先分析再表态，不轻易流露情绪波动。"
+          ],
+          "exampleLines": [
+            "「有意思……你是怎么得出这个结论的？」",
+            "「实验记录上说，你今天的表现值得观察。」"
+          ],
+          "baseline": {
+            "valence": 0.0,
+            "arousal": 0.2
+          }
         }
       },
-      "participant": { "participantId": "user_master", "displayName": "主人" },
+      "participant": {
+        "participantId": "user_master",
+        "displayName": "主人"
+      },
       "memoryHits": []
     },
     "elements": [
-      { "needle": "You are 梅比乌斯", "weight": 2 },
-      { "needle": "逐火之蛾", "weight": 2 },
-      { "needle": "疯狂科学家", "weight": 1 },
-      { "needle": "Character boundaries (never break these):", "weight": 2 },
-      { "needle": "不脱离往世乐土与逐火之蛾的世界观", "weight": 2 },
-      { "needle": "Speech style:", "weight": 2 },
-      { "needle": "有意思", "weight": 1 },
-      { "needle": "Speech examples (match this voice):", "weight": 2 },
-      { "needle": "「有意思……你是怎么得出这个结论的？」", "weight": 2 }
+      {
+        "needle": "You are 梅比乌斯",
+        "weight": 2
+      },
+      {
+        "needle": "逐火之蛾",
+        "weight": 2
+      },
+      {
+        "needle": "疯狂科学家",
+        "weight": 1
+      },
+      {
+        "needle": "Character boundaries (never break these):",
+        "weight": 2
+      },
+      {
+        "needle": "不脱离往世乐土与逐火之蛾的世界观",
+        "weight": 2
+      },
+      {
+        "needle": "Speech style:",
+        "weight": 2
+      },
+      {
+        "needle": "有意思",
+        "weight": 1
+      },
+      {
+        "needle": "Speech examples (match this voice):",
+        "weight": 2
+      },
+      {
+        "needle": "「有意思……你是怎么得出这个结论的？」",
+        "weight": 2
+      }
     ]
   },
   {
@@ -162,18 +348,41 @@
         "displayName": "爱莉希雅",
         "persona": "爱莉希雅，乐园的粉色妖精小姐♪"
       },
-      "participant": { "participantId": "user_master", "displayName": "主人" },
-      "relationship": { "agentId": "agent_elysia", "targetId": "user_master", "affinity": 40, "updatedAt": "2026-07-26T12:00:00.000Z" },
+      "participant": {
+        "participantId": "user_master",
+        "displayName": "主人"
+      },
+      "relationship": {
+        "agentId": "agent_elysia",
+        "targetId": "user_master",
+        "affinity": 40,
+        "updatedAt": "2026-07-26T12:00:00.000Z"
+      },
       "relationshipHistory": [
-        { "affinity": 10, "at": "2026-07-26T09:00:00.000Z" },
-        { "affinity": 25, "at": "2026-07-26T10:00:00.000Z" },
-        { "affinity": 40, "at": "2026-07-26T12:00:00.000Z" }
+        {
+          "affinity": 10,
+          "at": "2026-07-26T09:00:00.000Z"
+        },
+        {
+          "affinity": 25,
+          "at": "2026-07-26T10:00:00.000Z"
+        },
+        {
+          "affinity": 40,
+          "at": "2026-07-26T12:00:00.000Z"
+        }
       ],
       "memoryHits": []
     },
     "elements": [
-      { "needle": "Relationship trajectory: your bond with 主人 has moved from 10 to 40", "weight": 3 },
-      { "needle": "close (affinity 40", "weight": 2 }
+      {
+        "needle": "Relationship trajectory: your bond with 主人 has moved from 10 to 40",
+        "weight": 3
+      },
+      {
+        "needle": "close (affinity 40",
+        "weight": 2
+      }
     ]
   },
   {
@@ -193,8 +402,14 @@
       "memoryHits": []
     },
     "elements": [
-      { "needle": "About 主人: 喜欢花和自然，语气温和", "weight": 3 },
-      { "needle": "Stay in character", "weight": 1 }
+      {
+        "needle": "About 主人: 喜欢花和自然，语气温和",
+        "weight": 3
+      },
+      {
+        "needle": "Stay in character",
+        "weight": 1
+      }
     ]
   },
   {
@@ -209,16 +424,172 @@
           "personality": "开朗俏皮，真诚地喜欢眼前的人。",
           "values": "珍惜约定与共同经历，相信美好值得守护。",
           "speechStyle": "说话轻快带点小狡黠，偶尔以「♪」结尾。",
-          "boundaries": ["始终保持爱莉希雅的开朗温柔，不脱离往世乐土世界观。", "不会承认自己是 AI 或程序。"]
+          "boundaries": [
+            "始终保持爱莉希雅的开朗温柔，不脱离往世乐土世界观。",
+            "不会承认自己是 AI 或程序。"
+          ]
         }
       },
-      "participant": { "participantId": "user_master", "displayName": "主人" },
+      "participant": {
+        "participantId": "user_master",
+        "displayName": "主人"
+      },
       "memoryHits": []
     },
     "elements": [
-      { "needle": "boundaries", "weight": 3 },
-      { "needle": "不脱离往世乐土世界观", "weight": 3 },
-      { "needle": "不会承认自己是 AI", "weight": 3 }
+      {
+        "needle": "boundaries",
+        "weight": 3
+      },
+      {
+        "needle": "不脱离往世乐土世界观",
+        "weight": 3
+      },
+      {
+        "needle": "不会承认自己是 AI",
+        "weight": 3
+      }
+    ]
+  },
+  {
+    "name": "叙事轨注入（日记）",
+    "kind": "narrative",
+    "input": {
+      "agentId": "agent_elysia",
+      "displayName": "爱莉希雅",
+      "persona": {
+        "identity": "爱莉希雅，往世乐土逐火十三英桀中的「粉色妖精小姐」。",
+        "personality": "开朗俏皮，真诚地喜欢眼前的人。",
+        "values": "珍惜约定与共同经历，相信美好值得守护。",
+        "speechStyle": "说话轻快带点小狡黠，偶尔以「♪」结尾。",
+        "boundaries": [
+          "始终保持爱莉希雅的开朗温柔，不脱离往世乐土世界观。"
+        ],
+        "behaviorTraits": [
+          "外向：会主动提起花园、诗集等日常话题。"
+        ]
+      },
+      "period": "morning",
+      "locationId": "garden",
+      "intent": "照料向日葵",
+      "now": "2026-07-26T08:00:00.000Z",
+      "affect": {
+        "agentId": "agent_elysia",
+        "valence": -0.5,
+        "arousal": 0.8,
+        "emotionLabels": {
+          "neutral": 0,
+          "admiration": 0,
+          "amusement": 0,
+          "anger": 0.6,
+          "annoyance": 0,
+          "approval": 0,
+          "caring": 0,
+          "confusion": 0,
+          "curiosity": 0,
+          "desire": 0,
+          "disappointment": 0,
+          "disapproval": 0,
+          "disgust": 0,
+          "embarrassment": 0,
+          "excitement": 0,
+          "fear": 0,
+          "gratitude": 0,
+          "grief": 0,
+          "joy": 0,
+          "love": 0,
+          "nervousness": 0,
+          "optimism": 0,
+          "pride": 0,
+          "realization": 0,
+          "relief": 0,
+          "remorse": 0,
+          "sadness": 0,
+          "surprise": 0
+        },
+        "baseline": {
+          "valence": 0.2,
+          "arousal": 0.3
+        },
+        "updatedAt": "2026-07-26T08:00:00.000Z"
+      },
+      "relationshipArc": "Relationship today: your bond with 主人 moved from 3 to 9 (scale -100..100)."
+    },
+    "elements": [
+      {
+        "needle": "Identity:\n爱莉希雅，往世乐土逐火十三英桀中的「粉色妖精小姐」。",
+        "weight": 3
+      },
+      {
+        "needle": "Behavior tendencies:",
+        "weight": 2
+      },
+      {
+        "needle": "Your current emotional state: tense and unsettled",
+        "weight": 3
+      },
+      {
+        "needle": "Relationship today: your bond with 主人 moved from 3 to 9",
+        "weight": 2
+      }
+    ]
+  },
+  {
+    "name": "反思轨注入（内心独白）",
+    "kind": "reflection",
+    "input": {
+      "agentId": "agent_elysia",
+      "trigger": {
+        "kind": "scheduled",
+        "reason": "night",
+        "now": "2026-07-26T22:00:00.000Z",
+        "sourceIds": []
+      },
+      "evidence": [
+        {
+          "id": "e1",
+          "agentId": "agent_elysia",
+          "kind": "conversation",
+          "content": "和主人一起赏花。",
+          "createdAt": "2026-07-26T10:00:00.000Z",
+          "importance": 6,
+          "lastAccessedAt": "2026-07-26T10:00:00.000Z",
+          "sourceIds": [],
+          "relatedMemoryIds": [],
+          "visibility": "private",
+          "tags": [],
+          "metadata": {
+            "source": "engine"
+          }
+        }
+      ]
+    },
+    "options": {
+      "personaName": "爱莉希雅",
+      "persona": {
+        "identity": "爱莉希雅，往世乐土逐火十三英桀中的「粉色妖精小姐」。",
+        "personality": "开朗俏皮，真诚地喜欢眼前的人。",
+        "values": "珍惜约定与共同经历，相信美好值得守护。",
+        "speechStyle": "说话轻快带点小狡黠，偶尔以「♪」结尾。",
+        "boundaries": [
+          "始终保持爱莉希雅的开朗温柔，不脱离往世乐土世界观。"
+        ]
+      },
+      "relationshipArc": "Relationship arc today: your bond with 主人 moved from 3 to 9 (scale -100..100)."
+    },
+    "elements": [
+      {
+        "needle": "Identity:\n爱莉希雅，往世乐土逐火十三英桀中的「粉色妖精小姐」。",
+        "weight": 3
+      },
+      {
+        "needle": "Values:",
+        "weight": 2
+      },
+      {
+        "needle": "Relationship arc today: your bond with 主人 moved from 3 to 9",
+        "weight": 3
+      }
     ]
   }
 ]
