@@ -32,6 +32,8 @@ export interface ConversationReplyInput {
   history: readonly RealmConversationTurnV1[];
   /** The new participant message to answer. */
   message: string;
+  /** How the participant feels right now; renders as an empathic hint. */
+  participantEmotion?: { valence: number; arousal: number };
 }
 
 /** Reply generation port; the pi-agent-core adapter implements this. */
@@ -128,6 +130,9 @@ function buildReplyInput(request: RealmConversationRequestV1): ConversationReply
     systemPrompt,
     history: request.history,
     message: request.message.content,
+    // The participant's felt state rides along so the reply input can render
+    // it ("主人 seems down right now") — the seed of empathic responses.
+    participantEmotion: request.message.emotion,
   };
 }
 

@@ -35,7 +35,7 @@ export function createPiConversationReplyPort(
   return {
     async generateReply(input: ConversationReplyInput): Promise<{ content: string }> {
       const { agent } = buildAgent(input, deps);
-      await agent.prompt(input.message);
+      await agent.prompt(userMessageText(input));
       return { content: finalReplyText(agent) };
     },
     async generateReplyStream(
@@ -52,10 +52,24 @@ export function createPiConversationReplyPort(
           onDelta(assistantEvent.delta);
         }
       });
-      await agent.prompt(input.message);
+      await agent.prompt(userMessageText(input));
       return { content: finalReplyText(agent) };
     },
   };
+}
+
+/**
+ * The participant's message, with their felt state appended when shared so
+ * the agent can respond with empathy ("(主人 seems down right now)").
+ */
+function userMessageText(input: ConversationReplyInput): string {
+  const emotion = input.participantEmotion;
+  if (emotion === undefined) {
+    return input.message;
+  }
+  const description =
+    emotion.valence < -0.15 ? "down" : emotion.valence > 0.15 ? "in good spirits" : "composed";
+  return `${input.message}\n\n(Note: they seem ${description} right now; respond with empathy.)`;
 }
 
 function buildAgent(

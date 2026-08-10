@@ -76,6 +76,11 @@ export interface RealmConversationTurnV1 {
 export interface RealmConversationMessageV1 {
   messageId: string;
   content: string;
+  /**
+   * How the participant feels right now (valence -1..1, arousal 0..1);
+   * injected so the agent can respond with empathy.
+   */
+  emotion?: { valence: number; arousal: number };
 }
 
 export interface RealmConversationOptionsV1 {

@@ -6,6 +6,13 @@ import { CHAT_PAGE_HTML } from "../src/host/chatPage.js";
 import { blendConversationEmotion } from "../src/affect/plotRules.js";
 import { createInitialAffectState } from "../src/affect/plotRules.js";
 import type { LlmPort } from "../src/ports/ports.js";
+import type { StreamFn } from "@earendil-works/pi-agent-core";
+import {
+  createAssistantMessageEventStream,
+  type AssistantMessage,
+} from "@earendil-works/pi-ai";
+import { createPiConversationReplyPort } from "../src/conversation/piConversationReplyPort.js";
+import type { Context } from "@earendil-works/pi-ai";
 import { RealmHost } from "../src/host/realmHost.js";
 import { RealmStateStore } from "../src/host/realmState.js";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -1261,4 +1268,92 @@ test("relationship history is indexed by time and counted in stats", async () =>
     .get();
   db.close();
   assert.ok(index, "relationship history index exists");
+});
+
+// ── 参与者情绪输入（双向情感感知）────────────────────────────────────────
+
+test("conversation validator accepts participant emotion and rejects out-of-range", async () => {
+  const { validateRealmConversationRequestV1 } = await import("../src/service/realmConversationExecutor.js");
+  const base = {
+    schemaVersion: "realm-conversation.v1",
+    conversationId: "c1",
+    now: "2026-07-26T20:30:00.000Z",
+    agent: { agentId: "a1", personaId: "elysia", displayName: "爱莉希雅", persona: "p" },
+    participant: { participantId: "u", displayName: "主人" },
+    memories: [],
+    history: [],
+    message: { messageId: "m1", content: "我今天好难过", emotion: { valence: -0.8, arousal: 0.6 } },
+  };
+  const ok = validateRealmConversationRequestV1(base);
+  assert.deepEqual(ok.message.emotion, { valence: -0.8, arousal: 0.6 });
+
+  assert.throws(
+    () => validateRealmConversationRequestV1({ ...base, message: { ...base.message, emotion: { valence: 2, arousal: 0.5 } } }),
+    /message\.emotion needs valence -1\.\.1 and arousal 0\.\.1/,
+  );
+});
+
+test("reply port renders the participant emotion as an empathic hint", async () => {
+  let lastContent = "";
+  const finalMessage = {
+    role: "assistant",
+    content: [{ type: "text", text: "别难过，有我在♪" }],
+    api: "anthropic-messages",
+    provider: "test-provider",
+    model: "test-model",
+    usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    stopReason: "stop",
+    timestamp: 1_700_000_000_000,
+  } as AssistantMessage;
+  const streamFn: StreamFn = (_model, context) => {
+    lastContent = JSON.stringify((context as Context).messages.at(-1)?.content ?? "");
+    const stream = createAssistantMessageEventStream();
+    stream.push({ type: "start", partial: finalMessage });
+    stream.push({ type: "done", reason: "stop", message: finalMessage });
+    return stream;
+  };
+  const port = createPiConversationReplyPort({ model: { id: "stub", name: "Stub", api: "anthropic-messages", provider: "test-provider", reasoning: false, input: ["text"], contextWindow: 100_000, maxTokens: 4_096 } as never, streamFn });
+  const reply = await port.generateReply({
+    conversationId: "c1",
+    agentId: "a1",
+    now: "2026-07-26T20:30:00.000Z",
+    systemPrompt: "sys",
+    history: [],
+    message: "我今天好难过",
+    participantEmotion: { valence: -0.8, arousal: 0.6 },
+  });
+  assert.equal(reply.content, "别难过，有我在♪");
+  assert.match(lastContent, /Note: they seem down right now; respond with empathy/);
+});
+
+test("reply port leaves the message alone without participant emotion", async () => {
+  let lastContent = "";
+  const finalMessage = {
+    role: "assistant",
+    content: [{ type: "text", text: "好呀" }],
+    api: "anthropic-messages",
+    provider: "test-provider",
+    model: "test-model",
+    usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    stopReason: "stop",
+    timestamp: 1_700_000_000_000,
+  } as AssistantMessage;
+  const streamFn: StreamFn = (_model, context) => {
+    lastContent = JSON.stringify((context as Context).messages.at(-1)?.content ?? "");
+    const stream = createAssistantMessageEventStream();
+    stream.push({ type: "start", partial: finalMessage });
+    stream.push({ type: "done", reason: "stop", message: finalMessage });
+    return stream;
+  };
+  const port = createPiConversationReplyPort({ model: { id: "stub", name: "Stub", api: "anthropic-messages", provider: "test-provider", reasoning: false, input: ["text"], contextWindow: 100_000, maxTokens: 4_096 } as never, streamFn });
+  await port.generateReply({
+    conversationId: "c1",
+    agentId: "a1",
+    now: "2026-07-26T20:30:00.000Z",
+    systemPrompt: "sys",
+    history: [],
+    message: "你好",
+  });
+  const parsed = JSON.parse(lastContent) as Array<{ type: string; text?: string }>;
+  assert.deepEqual(parsed, [{ type: "text", text: "你好" }], "message left as the plain content block");
 });

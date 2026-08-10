@@ -322,10 +322,35 @@ function validateMessage(input: unknown): RealmConversationMessageV1 {
   if (!isRecord(input)) {
     throw new RealmConversationValidationError("message must be an object");
   }
+  const emotion = validateMessageEmotion(input.emotion);
   return {
     messageId: requireString(input.messageId, "message.messageId"),
     content: requireString(input.content, "message.content"),
+    ...(emotion !== undefined ? { emotion } : {}),
   };
+}
+
+/**
+ * Participant emotion signature: valence -1..1, arousal 0..1; absent means
+ * the participant did not share how they feel.
+ */
+function validateMessageEmotion(input: unknown): { valence: number; arousal: number } | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (typeof input !== "object" || input === null) {
+    throw new RealmConversationValidationError("message.emotion must be an object");
+  }
+  const record = input as Record<string, unknown>;
+  if (
+    typeof record.valence !== "number" || record.valence < -1 || record.valence > 1 ||
+    typeof record.arousal !== "number" || record.arousal < 0 || record.arousal > 1
+  ) {
+    throw new RealmConversationValidationError(
+      "message.emotion needs valence -1..1 and arousal 0..1",
+    );
+  }
+  return { valence: record.valence, arousal: record.arousal };
 }
 
 function validateOptions(input: unknown): RealmConversationOptionsV1 | undefined {
