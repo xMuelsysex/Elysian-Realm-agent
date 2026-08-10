@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { spawn } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 
 const credPath = process.env.ELYSIAN_CREDENTIALS_PATH ?? new URL("./stub-credentials.json", import.meta.url).pathname;
 const dir = mkdtempSync(join(tmpdir(), "sse-real-"));
@@ -126,6 +127,22 @@ try {
       : `FAIL history expected >= 2 turns, got ${turns.length}`,
   );
   if (turns.length < 2) exitCode = 1;
+
+  // ── relationship history: the chat's affinity move must be logged ─────
+  let historyRows = 0;
+  try {
+    const db = new DatabaseSync(join(dir, "realm.sqlite"));
+    historyRows = db
+      .prepare("SELECT COUNT(*) AS n FROM relationship_history WHERE agent_id = ?")
+      .get("agent_elysia").n;
+    db.close();
+  } catch { /* sqlite read failure → historyRows stays 0 */ }
+  results.push(
+    historyRows >= 1
+      ? `PASS relationship history logged ${historyRows} row(s)`
+      : `FAIL relationship history empty after chat (affinity should have moved)`,
+  );
+  if (historyRows < 1) exitCode = 1;
 
   // ── nightly loop: tick routines + narrative (+ reflection at night) ───
   // Fresh data dir: startup tick writes 2 routine memories, the narrative 1,
