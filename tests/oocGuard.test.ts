@@ -5,6 +5,7 @@ import { detectOocLeak } from "../src/conversation/oocGuard.js";
 import { CHAT_PAGE_HTML } from "../src/host/chatPage.js";
 import { blendConversationEmotion } from "../src/affect/plotRules.js";
 import { createInitialAffectState } from "../src/affect/plotRules.js";
+import type { LlmPort } from "../src/ports/ports.js";
 import { RealmHost } from "../src/host/realmHost.js";
 import { RealmStateStore } from "../src/host/realmState.js";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -1155,4 +1156,76 @@ test("host narrative run passes the day's relationship arc", async () => {
     },
   );
   assert.ok("write" in result);
+});
+
+// ── OOC 防线覆盖 tick 轨（叙事/反思）────────────────────────────────────
+
+test("narrative OOC leaks surface in tick notes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-narrooc-"));
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人" },
+      agents: [
+        {
+          agentId: AGENT_ID,
+          personaId: "elysia",
+          displayName: "爱莉希雅",
+          persona: "p",
+          routines: [{ period: "morning", locationId: "garden", intent: "照料花" }],
+        },
+      ],
+    }),
+  );
+  const state = new RealmStateStore(dir);
+  const oocLlm: LlmPort = {
+    name: "fake",
+    model: "fake",
+    completeChat: () => Promise.resolve({ content: "作为AI我记录一下今天的花。" }),
+  };
+  const host = new RealmHost(state, () => undefined, {
+    now: () => new Date(2026, 6, 26, 9, 0, 0),
+    llm: () => oocLlm,
+  });
+  const report = await host.tickIfPeriodChanged();
+  assert.ok(report);
+  assert.ok(
+    report.notes.some((note) => note.includes("narrative ooc-leak: admits being AI")),
+    "narrative OOC leak lands in notes",
+  );
+});
+
+test("in-character narratives produce no OOC notes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-narrooc-clean-"));
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人" },
+      agents: [
+        {
+          agentId: AGENT_ID,
+          personaId: "elysia",
+          displayName: "爱莉希雅",
+          persona: "p",
+          routines: [{ period: "morning", locationId: "garden", intent: "照料花" }],
+        },
+      ],
+    }),
+  );
+  const state = new RealmStateStore(dir);
+  const cleanLlm: LlmPort = {
+    name: "fake",
+    model: "fake",
+    completeChat: () => Promise.resolve({ content: "今天的花开得真好，我偷偷许了个愿♪" }),
+  };
+  const host = new RealmHost(state, () => undefined, {
+    now: () => new Date(2026, 6, 26, 9, 0, 0),
+    llm: () => cleanLlm,
+  });
+  const report = await host.tickIfPeriodChanged();
+  assert.ok(report);
+  assert.ok(
+    !report.notes.some((note) => note.includes("ooc-leak")),
+    "clean narrative produces no OOC notes",
+  );
 });

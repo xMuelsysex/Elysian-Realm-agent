@@ -412,6 +412,12 @@ export class RealmHost {
         ...(relationshipArc !== undefined ? { relationshipArc } : {}),
       });
       if ("write" in result) {
+        // OOC guard covers every LLM output surface: a diary that breaks
+        // character stays visible instead of silently entering the stream.
+        const leak = detectOocLeak(result.write.content);
+        if (leak !== undefined) {
+          notes.push(`${agent.agentId}: narrative ooc-leak: ${leak}`);
+        }
         this.state.applyMemoryWrites(agent.agentId, [result.write]);
         written += 1;
       } else {
@@ -478,6 +484,13 @@ export class RealmHost {
             source: "engine",
           } as RealmMemoryMetadataV1,
         }));
+        // OOC guard covers the inner voice too.
+        for (const write of writes) {
+          const leak = detectOocLeak(write.content);
+          if (leak !== undefined) {
+            notes.push(`${agent.agentId}: reflection ooc-leak: ${leak}`);
+          }
+        }
         this.state.applyMemoryWrites(agent.agentId, writes);
         written += writes.length;
       } else if (reflection.status !== "completed") {
