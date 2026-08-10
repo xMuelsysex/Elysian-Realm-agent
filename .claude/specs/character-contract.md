@@ -17,12 +17,13 @@
 
 ## 契约
 
-- `RealmStructuredPersonaV1`：`{identity, personality, values, speechStyle, boundaries[], behaviorTraits[], exampleLines[], baseline?, affectModifiers?}`；必填四字段（identity/personality/values/speechStyle）为非空字符串，三个数组可选（校验器对 undefined 默认 `[]`），`baseline {valence, arousal}` 可选（valence -1..1、arousal 0..1，越界拒写），`affectModifiers` 可选（事件类型→非负响应倍率，未知类型/负值拒写）。
+- `RealmStructuredPersonaV1`：`{identity, personality, values, speechStyle, boundaries[], behaviorTraits[], exampleLines[], baseline?, affectModifiers?, emotionResponsiveness?}`；必填四字段（identity/personality/values/speechStyle）为非空字符串，三个数组可选（校验器对 undefined 默认 `[]`），`baseline {valence, arousal}` 可选（valence -1..1、arousal 0..1，越界拒写），`affectModifiers` 可选（事件类型→非负响应倍率，未知类型/负值拒写），`emotionResponsiveness` 可选（0..1，对话情感闭环权重，默认 0.1）。
 - `persona` 字段类型统一为 `string | RealmStructuredPersonaV1`（realm.json 配置、RealmConversationAgentV1、LifeNarrativeInput、LlmReflectionPlannerOptions）。
 - 渲染单一事实来源：`personaSections()`（src/conversation/conversationPrompt.ts 导出）——字符串 → 旧式单节 `Persona:\n...`；结构化 → Identity/Personality/Values/Speech style 四节 + 可选 Character boundaries（红线）/Behavior tendencies/Speech examples 三节。**三个数组必须 `?? []` 容错**（校验器允许缺省，渲染函数要匹配该语义，勿假设数组必在）。
 - 消费点：对话 system prompt、life narrative（tick 日记）、夜间反思——三处共用 personaSections，不各自拼装。
 - 叙事情感注入：lifeNarrative 接受 `affect`，把 `describeAffectState` 描述注入日记 prompt 的 user 消息；同一快照同时作为记忆 emotion 签名。
 - 性格调制：`applyPlotEvents` / `computeAffinityDelta` 接受可选 `modifiers`（事件类型→倍率，缺省 1）；宿主 plotEvent 传 `persona.affectModifiers`（手动投喂 + 剧情脚本自动继承）；服务契约（tick 轨）不动。
+- 情绪外露度：`blendConversationEmotion` 接受可选 `rate`（缺省 0.1）；宿主按 `persona.emotionResponsiveness` 调制对话情感闭环权重。
 
 ## 校验规则
 

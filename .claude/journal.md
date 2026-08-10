@@ -1,5 +1,11 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补十二：情绪外露度（autoresearch 战役十七）
+
+- persona 卡新增可选 `emotionResponsiveness`（0..1，默认 0.1）：`blendConversationEmotion` 加 rate 参数（默认兼容），宿主 applyConversationEmotion 用角色 rate。爱莉希雅 0.15（外露）、梅比乌斯 0.05（克制）——聊天情绪对情感状态的传导速度随性格不同。
+- 双校验器拒绝越界。+3 测试。223 tests 全绿 + verify:e2e 13 项。
+- 坑：宿主需导入 CONVERSATION_EMOTION_BLEND_RATE 常量（TS2304）。
+
 ## 2026-08-10 二十二轮补十一：度量与 e2e 补全（autoresearch 战役十五六）
 
 - measure 新增「关系轨迹注入」场景（Relationship trajectory 行 + affinity 分级行 needle 全 HIT）——对话关系感知防回归覆盖；梅比乌斯 morning low 例程（低落时独在实验室核对日志）——双角色情绪驱动行为差异化补全。
