@@ -39,6 +39,11 @@ export interface RealmStructuredPersonaV1 {
    * state decays back to. Absent means the engine default (0.2 / 0.3).
    */
   baseline?: { valence: number; arousal: number };
+  /**
+   * Per-event-type emotional response multipliers (e.g. praise: 0.5 shrugs
+   * off praise, criticism: 2.0 is wounded deeply). Absent = 1 for all.
+   */
+  affectModifiers?: Partial<Record<import("../affect/affectRecords.js").PlotEventType, number>>;
 }
 
 export interface RealmConversationAgentV1 {

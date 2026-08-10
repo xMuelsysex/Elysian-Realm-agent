@@ -166,6 +166,8 @@ export function applyPlotEvents(
   state: AffectState,
   events: readonly PlotEvent[],
   at: string,
+  /** Per-event-type response multipliers (character temperament); absent = 1. */
+  modifiers?: Readonly<Partial<Record<PlotEventType, number>>>,
 ): AffectState {
   const decayed = decayAffectState(state, at);
   if (events.length === 0) {
@@ -177,7 +179,7 @@ export function applyPlotEvents(
   const labels = { ...decayed.emotionLabels };
   for (const event of events) {
     const rule = PLOT_EVENT_RULES[event.type];
-    const scale = event.intensity;
+    const scale = event.intensity * (modifiers?.[event.type] ?? 1);
     valence += rule.valenceDelta * scale;
     arousal += rule.arousalDelta * scale;
     for (const label of EMOTION_LABELS) {
@@ -205,13 +207,17 @@ export function applyPlotEvents(
  * Proposed affinity movement toward the host participant from this batch of
  * events: host-targeted rule deltas scaled by intensity, bounded per call.
  */
-export function computeAffinityDelta(events: readonly PlotEvent[]): number {
+export function computeAffinityDelta(
+  events: readonly PlotEvent[],
+  /** Per-event-type response multipliers; absent = 1. */
+  modifiers?: Readonly<Partial<Record<PlotEventType, number>>>,
+): number {
   let total = 0;
   for (const event of events) {
     if (event.target !== "host") {
       continue;
     }
-    total += PLOT_EVENT_RULES[event.type].affinityDelta * event.intensity;
+    total += PLOT_EVENT_RULES[event.type].affinityDelta * event.intensity * (modifiers?.[event.type] ?? 1);
   }
   return clampNumber(total, -MAX_TICK_AFFINITY_DELTA, MAX_TICK_AFFINITY_DELTA);
 }

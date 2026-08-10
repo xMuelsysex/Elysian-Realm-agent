@@ -330,3 +330,101 @@ test("host chat without an emotion signature leaves affect untouched", async () 
   const after = state.affectState(AGENT_ID);
   assert.deepEqual(after, before, "fake runner carries no emotion signature");
 });
+
+// ── 性格调制：角色对剧情事件的情感响应差异化 ─────────────────────────────
+
+test("applyPlotEvents scales responses by per-type modifiers", async () => {
+  const { applyPlotEvents } = await import("../src/affect/plotRules.js");
+  const { createInitialAffectState } = await import("../src/affect/plotRules.js");
+  const base = createInitialAffectState(AGENT_ID, "2026-07-26T10:00:00.000Z", { valence: 0, arousal: 0.3 });
+  const praise = { id: "p1", type: "praise" as const, target: "host" as const, intensity: 1, at: "2026-07-26T10:00:00.000Z" };
+
+  const plain = applyPlotEvents(base, [praise], "2026-07-26T10:01:00.000Z");
+  const doubled = applyPlotEvents(base, [praise], "2026-07-26T10:01:00.000Z", { praise: 2 });
+  assert.ok(doubled.valence - base.valence > plain.valence - base.valence, "2x modifier amplifies the response");
+  assert.ok(Math.abs((doubled.valence - base.valence) - 2 * (plain.valence - base.valence)) < 1e-9);
+});
+
+test("host plot events apply the character's affect modifiers", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-modifiers-"));
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      user: { participantId: "user_master", displayName: "主人" },
+      agents: [
+        {
+          agentId: AGENT_ID,
+          personaId: "elysia",
+          displayName: "爱莉希雅",
+          persona: {
+            identity: "爱莉希雅",
+            personality: "开朗",
+            values: "美好",
+            speechStyle: "轻快",
+            baseline: { valence: 0, arousal: 0.3 },
+            affectModifiers: { praise: 0 }, // completely indifferent to praise
+          },
+          routines: [],
+        },
+      ],
+    }),
+  );
+  const state = new RealmStateStore(dir);
+  const host = new RealmHost(state, () => undefined, {
+    now: () => new Date(2026, 6, 26, 9, 0, 0),
+  });
+  host.plotEvent(AGENT_ID, { type: "praise", target: "host" });
+  const affect = state.affectState(AGENT_ID);
+  assert.ok(affect);
+  assert.equal(affect.valence, 0, "praise modifier 0 means no emotional response");
+  assert.equal(state.relationship(AGENT_ID)?.affinity, undefined, "no affinity change either");
+});
+
+test("two personas respond differently to the same event", async () => {
+  // Elysia treasures praise; Mobius shrugs it off — same event, same engine.
+  const { applyPlotEvents, createInitialAffectState } = await import("../src/affect/plotRules.js");
+  const at = "2026-07-26T10:00:00.000Z";
+  const praise = { id: "p1", type: "praise" as const, target: "host" as const, intensity: 1, at };
+  const elysia = applyPlotEvents(
+    createInitialAffectState("a", at, { valence: 0, arousal: 0.3 }),
+    [praise], at, { praise: 1.3 },
+  );
+  const mobius = applyPlotEvents(
+    createInitialAffectState("a", at, { valence: 0, arousal: 0.3 }),
+    [praise], at, { praise: 0.4 },
+  );
+  assert.ok(elysia.valence > mobius.valence, "Elysia is more moved by praise than Mobius");
+});
+
+test("affectModifiers validation rejects unknown event types and negatives", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "elysian-badmods-"));
+  const base = {
+    user: { participantId: "user_master", displayName: "主人" },
+    agents: [
+      {
+        agentId: AGENT_ID,
+        personaId: "elysia",
+        displayName: "爱莉希雅",
+        persona: { identity: "i", personality: "p", values: "v", speechStyle: "s" },
+        routines: [],
+      },
+    ],
+  };
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      ...base,
+      agents: [{ ...base.agents[0], persona: { ...base.agents[0].persona, affectModifiers: { notAnEvent: 1 } } }],
+    }),
+  );
+  assert.throws(() => new RealmStateStore(dir), /not a plot event type/);
+
+  writeFileSync(
+    join(dir, "realm.json"),
+    JSON.stringify({
+      ...base,
+      agents: [{ ...base.agents[0], persona: { ...base.agents[0].persona, affectModifiers: { praise: -1 } } }],
+    }),
+  );
+  assert.throws(() => new RealmStateStore(dir), /non-negative finite number/);
+});

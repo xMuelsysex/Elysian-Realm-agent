@@ -16,10 +16,12 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { InMemoryAffectStore } from "../affect/inMemoryAffectStore.js";
+import { PLOT_EVENT_TYPES } from "../affect/affectRecords.js";
 import type {
   AffectLabelStrengths,
   AffectState,
   AgentMood,
+  PlotEventType,
   RelationshipAffect,
 } from "../affect/affectRecords.js";
 import { InMemoryMemoryStore } from "../memory/inMemoryMemoryStore.js";
@@ -102,6 +104,7 @@ export const DEFAULT_REALM_CONFIG: RealmConfig = {
           "「上次的约定，我可一直记着呢♪」",
         ],
         baseline: { valence: 0.35, arousal: 0.4 },
+        affectModifiers: { praise: 1.3, criticism: 0.8 },
       },
       plotScript: [
         {
@@ -147,6 +150,7 @@ export const DEFAULT_REALM_CONFIG: RealmConfig = {
           "「别急着回答，让我先想想。」",
         ],
         baseline: { valence: 0.0, arousal: 0.2 },
+        affectModifiers: { praise: 0.4, criticism: 1.6 },
       },
       routines: [
         { period: "morning", locationId: "lab", intent: "在实验室整理昨夜的数据记录。" },
@@ -957,6 +961,7 @@ function validatePersona(input: unknown, index: number): string | RealmStructure
     }
     baseline = { valence: b.valence, arousal: b.arousal };
   }
+  const affectModifiers = validateAffectModifiers(record.affectModifiers, index);
   return {
     identity: record.identity as string,
     personality: record.personality as string,
@@ -966,7 +971,36 @@ function validatePersona(input: unknown, index: number): string | RealmStructure
     behaviorTraits: stringArray("behaviorTraits"),
     exampleLines: stringArray("exampleLines"),
     ...(baseline !== undefined ? { baseline } : {}),
+    ...(affectModifiers !== undefined ? { affectModifiers } : {}),
   };
+}
+
+function validateAffectModifiers(
+  input: unknown,
+  index: number,
+): Partial<Record<PlotEventType, number>> | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (typeof input !== "object" || input === null) {
+    throw new RealmStateError(`realm config: agents[${index}].persona.affectModifiers must be an object`);
+  }
+  const record = input as Record<string, unknown>;
+  const out: Partial<Record<PlotEventType, number>> = {};
+  for (const [type, value] of Object.entries(record)) {
+    if (!PLOT_EVENT_TYPES.includes(type as PlotEventType)) {
+      throw new RealmStateError(
+        `realm config: agents[${index}].persona.affectModifiers.${type} is not a plot event type`,
+      );
+    }
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      throw new RealmStateError(
+        `realm config: agents[${index}].persona.affectModifiers.${type} must be a non-negative finite number`,
+      );
+    }
+    out[type as PlotEventType] = value;
+  }
+  return out;
 }
 
 function validateAgent(input: unknown, index: number): RealmPersonaConfig {

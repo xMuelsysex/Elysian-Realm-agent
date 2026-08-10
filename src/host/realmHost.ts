@@ -98,6 +98,16 @@ function personaBaseline(agent: RealmPersonaConfig): { valence: number; arousal:
   return { ...AFFECT_DEFAULT_BASELINE };
 }
 
+/** The character's per-event response multipliers, or undefined when absent. */
+function personaAffectModifiers(
+  agent: RealmPersonaConfig,
+): Partial<Record<PlotEventType, number>> | undefined {
+  if (typeof agent.persona === "object" && agent.persona.affectModifiers !== undefined) {
+    return { ...agent.persona.affectModifiers };
+  }
+  return undefined;
+}
+
 export class RealmHost {
   private readonly state: RealmStateStore;
   private readonly runner: () => ConversationRunner | undefined;
@@ -441,8 +451,13 @@ export class RealmHost {
     const current =
       this.state.affectState(agentId) ?? createInitialAffectState(agentId, at, personaBaseline(this.state.agent(agentId)));
     const proposal: RealmAffectProposalV1 = {
-      affect: applyPlotEvents(current, [event], at),
-      affinityDelta: computeAffinityDelta([event]),
+      affect: applyPlotEvents(
+        current,
+        [event],
+        at,
+        personaAffectModifiers(this.state.agent(agentId)),
+      ),
+      affinityDelta: computeAffinityDelta([event], personaAffectModifiers(this.state.agent(agentId))),
     };
     this.state.applyAffectProposal(agentId, proposal, at);
     return proposal.affect;

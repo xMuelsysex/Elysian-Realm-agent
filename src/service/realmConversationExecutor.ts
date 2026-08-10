@@ -9,7 +9,8 @@ import {
   validateImportedMood,
   validateImportedRelationship,
 } from "../affect/affectValidation.js";
-import type { AffectState, AgentMood, RelationshipAffect } from "../affect/affectRecords.js";
+import { PLOT_EVENT_TYPES } from "../affect/affectRecords.js";
+import type { AffectState, AgentMood, PlotEventType, RelationshipAffect } from "../affect/affectRecords.js";
 import type {
   ConversationRunner,
 } from "../conversation/conversationRunner.js";
@@ -134,6 +135,7 @@ function validatePersona(input: unknown): string | RealmStructuredPersonaV1 {
     }
     baseline = { valence: rawBaseline.valence, arousal: rawBaseline.arousal };
   }
+  const affectModifiers = validateAffectModifiers(input.affectModifiers);
   return {
     identity: input.identity as string,
     personality: input.personality as string,
@@ -143,7 +145,34 @@ function validatePersona(input: unknown): string | RealmStructuredPersonaV1 {
     behaviorTraits: stringArray("behaviorTraits"),
     exampleLines: stringArray("exampleLines"),
     ...(baseline !== undefined ? { baseline } : {}),
+    ...(affectModifiers !== undefined ? { affectModifiers } : {}),
   };
+}
+
+function validateAffectModifiers(
+  input: unknown,
+): Partial<Record<PlotEventType, number>> | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (!isRecord(input)) {
+    throw new RealmConversationValidationError("agent.persona.affectModifiers must be an object");
+  }
+  const out: Partial<Record<PlotEventType, number>> = {};
+  for (const [type, value] of Object.entries(input)) {
+    if (!PLOT_EVENT_TYPES.includes(type as PlotEventType)) {
+      throw new RealmConversationValidationError(
+        `agent.persona.affectModifiers.${type} is not a plot event type`,
+      );
+    }
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      throw new RealmConversationValidationError(
+        `agent.persona.affectModifiers.${type} must be a non-negative finite number`,
+      );
+    }
+    out[type as PlotEventType] = value;
+  }
+  return out;
 }
 
 function validateParticipant(input: unknown): RealmConversationParticipantV1 {
