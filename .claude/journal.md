@@ -1,5 +1,9 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补十六：e2e 对话情感闭环覆盖（autoresearch 战役二十二）
+
+- llm-stub 分析 JSON 加 emotion（valence 0.6/arousal 0.5）；verify-sse 新增断言：chat 后 affect_states.valence > 0.2（实测 0.39 = tick 脚本 + 两次 chat 情感逼近累计）。对话情感闭环真实链路回归保护到位。e2e 14 项 PASS。231 tests 全绿。
+
 ## 2026-08-10 二十二轮补十五：剧情脚本日期轮换 + 留痕同步（autoresearch 战役二十一二）
 
 - plotScript 加可选 `days`（0=周日..6=周六 星期过滤，缺省每天）；宿主 runScriptedPlot 按 date.getDay() 匹配；默认配置爱莉希雅 evening 加周日专属 gain（每周集市回忆）——生活事件有规律有变化。+2 测试。
