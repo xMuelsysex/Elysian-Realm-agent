@@ -177,6 +177,27 @@
     ]
   },
   {
+    "name": "参与者画像",
+    "input": {
+      "agent": {
+        "agentId": "agent_elysia",
+        "personaId": "elysia",
+        "displayName": "爱莉希雅",
+        "persona": "爱莉希雅，乐园的粉色妖精小姐♪"
+      },
+      "participant": {
+        "participantId": "user_master",
+        "displayName": "主人",
+        "profile": "喜欢花和自然，语气温和；工作忙碌但总记得来看她。"
+      },
+      "memoryHits": []
+    },
+    "elements": [
+      { "needle": "About 主人: 喜欢花和自然，语气温和", "weight": 3 },
+      { "needle": "Stay in character", "weight": 1 }
+    ]
+  },
+  {
     "name": "OOC 红线",
     "input": {
       "agent": {

@@ -33,6 +33,18 @@ test("ooc guard flags game-character leaks and passes normal replies", () => {
   assert.equal(detectOocLeak("AI 技术确实改变了很多行业。"), undefined);
 });
 
+test("ooc guard flags virtual-existence and emotion-denial leaks", () => {
+  assert.equal(detectOocLeak("其实我只是个虚拟角色，别太认真。"), "admits being virtual");
+  assert.equal(detectOocLeak("我没有真实情感，这是设定好的回应。"), "denies real emotions");
+  assert.equal(detectOocLeak("I'm just a bot, I can't feel anything."), "admits being AI");
+  assert.equal(detectOocLeak("我没有感情，这只是程序在运转。"), "denies real emotions");
+});
+
+test("ooc guard still passes in-character emotion talk", () => {
+  assert.equal(detectOocLeak("我没有办法不难过，因为你很重要。"), undefined);
+  assert.equal(detectOocLeak("虚拟的世界里也有真实的感情呀♪"), undefined);
+});
+
 test("ooc guard is case-insensitive for english patterns", () => {
   assert.equal(detectOocLeak("As An AI MODEL I must decline."), "admits being AI");
 });

@@ -9,6 +9,9 @@ const OOC_LEAK_PATTERNS: { pattern: RegExp; label: string }[] = [
   { pattern: /as an? (?:AI|artificial intelligence|language model|program|bot)/i, label: "admits being AI" },
   { pattern: /I(?:'m| am) (?:an? )?(?:AI|artificial intelligence|language model|program|bot)/i, label: "admits being AI" },
   { pattern: /我(?:是|只是)个?游戏(?:角色|npc)/i, label: "admits being a game character" },
+  { pattern: /我(?:是|只是)(?:个)?虚拟(?:角色|人|存在)/i, label: "admits being virtual" },
+  { pattern: /我没有(?:真实)?(?:情感|感情|情绪)/i, label: "denies real emotions" },
+  { pattern: /I(?:'m| am) just an? (?:AI|bot|virtual assistant)/i, label: "admits being AI" },
   { pattern: /说实话[，,]?我是AI/i, label: "admits being AI" },
 ];
 
