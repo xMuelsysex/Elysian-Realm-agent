@@ -1,5 +1,12 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补十五：剧情脚本日期轮换 + 留痕同步（autoresearch 战役二十一二）
+
+- plotScript 加可选 `days`（0=周日..6=周六 星期过滤，缺省每天）；宿主 runScriptedPlot 按 date.getDay() 匹配；默认配置爱莉希雅 evening 加周日专属 gain（每周集市回忆）——生活事件有规律有变化。+2 测试。
+- 留痕同步：README 补全三层调制/情绪例程/剧情脚本/profile/轨迹；prompt.md What's Been Tried 扩展至战役一~十九（19 特性 + 12 教训）——未来 session 可完整续跑。
+- 231 tests 全绿 + verify:e2e 13 项。
+- 坑：正则转义层级（匹配字面点 `/0\.\.6/` 单反斜杠）；测试先写文件后建 store；日期前提先验证（2026-07-26 getDay=0）。
+
 ## 2026-08-10 二十二轮补十四：OOC 模式扩展 + 度量补全（autoresearch 战役十九）
 
 - OOC 检测扩展：新增虚拟存在（我是虚拟角色/虚拟人，admits being virtual）、否认真实情感（我没有真实情感，denies real emotions）、I'm just a bot 模式；负例验证角色式情感表达不误伤。
