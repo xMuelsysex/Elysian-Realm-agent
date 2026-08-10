@@ -1,5 +1,10 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-08-10 二十二轮补十三：参与者画像（autoresearch 战役十八）
+
+- user/participant 可选 `profile`（非空字符串校验）：对话 prompt 注入「About 主人: ...」节（缺省不注入）；宿主 config.user 自动透传。默认 realm.json 配「喜欢花和自然，语气温和；工作忙碌但总记得来看她」——角色了解对话对象，回应更有针对性（SillyTavern 世界书概念）。
+- +4 测试。227 tests 全绿 + verify:e2e 13 项。
+
 ## 2026-08-10 二十二轮补十二：情绪外露度（autoresearch 战役十七）
 
 - persona 卡新增可选 `emotionResponsiveness`（0..1，默认 0.1）：`blendConversationEmotion` 加 rate 参数（默认兼容），宿主 applyConversationEmotion 用角色 rate。爱莉希雅 0.15（外露）、梅比乌斯 0.05（克制）——聊天情绪对情感状态的传导速度随性格不同。

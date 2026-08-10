@@ -21,6 +21,7 @@
 - `persona` 字段类型统一为 `string | RealmStructuredPersonaV1`（realm.json 配置、RealmConversationAgentV1、LifeNarrativeInput、LlmReflectionPlannerOptions）。
 - 渲染单一事实来源：`personaSections()`（src/conversation/conversationPrompt.ts 导出）——字符串 → 旧式单节 `Persona:\n...`；结构化 → Identity/Personality/Values/Speech style 四节 + 可选 Character boundaries（红线）/Behavior tendencies/Speech examples 三节。**三个数组必须 `?? []` 容错**（校验器允许缺省，渲染函数要匹配该语义，勿假设数组必在）。
 - 消费点：对话 system prompt、life narrative（tick 日记）、夜间反思——三处共用 personaSections，不各自拼装。
+- 参与者画像：`RealmUserConfig` / `RealmConversationParticipantV1` 可选 `profile`（非空字符串校验）；对话 prompt 注入「About 主人: ...」节（缺省不注入）；宿主 config.user 自动透传。
 - 叙事情感注入：lifeNarrative 接受 `affect`，把 `describeAffectState` 描述注入日记 prompt 的 user 消息；同一快照同时作为记忆 emotion 签名。
 - 性格调制：`applyPlotEvents` / `computeAffinityDelta` 接受可选 `modifiers`（事件类型→倍率，缺省 1）；宿主 plotEvent 传 `persona.affectModifiers`（手动投喂 + 剧情脚本自动继承）；服务契约（tick 轨）不动。
 - 情绪外露度：`blendConversationEmotion` 接受可选 `rate`（缺省 0.1）；宿主按 `persona.emotionResponsiveness` 调制对话情感闭环权重。
