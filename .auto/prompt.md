@@ -41,18 +41,26 @@
 
 ## What's Been Tried
 
-（2026-08-10 战役一~四全部完成，fidelity 36→100，tests 177→196，verify:e2e 10→12 项）
+（2026-08-10 战役一~十九全部完成，fidelity 36→100，tests 177→229，verify:e2e 10→13 项，浏览器验证多轮）
 
 - **P1 结构化角色契约** ✅：`RealmStructuredPersonaV1`（identity/personality/values/speechStyle/boundaries/behaviorTraits/exampleLines），realm.json + DEFAULT_REALM_CONFIG 升级爱莉希雅角色卡（往世乐土设定+♪+OOC 红线），字符串 persona 兼容（旧路径逐字节不变）。
 - **P2 说话风格注入** ✅：personaSections 纯函数分块渲染，对话 prompt 注入 Speech style + Speech examples（few-shot 口吻锚）。
 - **P3 OOC 红线** ✅：boundaries 注入「Character boundaries (never break these)」节，正向表述。
 - **P4 叙事/反思复用** ✅：lifeNarrative + llmReflectionPlanner 共用 personaSections（tick 轨也吃角色契约）。
-- **多英桀** ✅：默认配置新增梅比乌斯（差异化角色卡），chat 页选择器激活，e2e 多 agent 断言（state 列出 + 独立聊天 + 历史持久化）。
-- **OOC 泄露检测** ✅：src/conversation/oocGuard.ts 纯函数 detectOocLeak（中英泄露形态），宿主 chat/chatStream 双路径 analysisReason 追加 ooc-leak 标注（不拦截，只让泄露可见）。
-- **tick 轨情感签名** ✅：runLifeNarrative 接受 emotion，宿主 runNarratives 把当前 affect 快照打进 narrative 记忆——tick/对话两轨都带情感签名。
-- **剧情脚本** ✅（affect.md 最后候选）：realm.json plotScript 按 period 自动投喂 PlotEvent；修复 affinity 小数×INTEGER 列崩溃 bug（storeAffinity round）。
-- **角色化性情基线** ✅：persona.baseline 可选（ACT 人因而异），tick 首轮用角色基线初始化 affect（爱莉希雅 {0.35,0.4} 开朗 / 梅比乌斯 {0,0.2} 冷静），衰减回归目标因人而异；双校验器限 valence -1..1/arousal 0..1。
-- **叙事情感注入** ✅：lifeNarrative prompt 注入当前情感描述，同一 affect 快照做 prompt + 记忆签名——tick 日记情绪贴合角色心境。
-- **多角色度量** ✅：measure 新增梅比乌斯场景（9 needle 全 HIT），fidelity 覆盖双角色防退化。
-- **测试**：199 tests 全绿；verify:e2e 12 项 PASS。
-- 死路/教训：measure needle 须匹配 prompt 实际输出（节标题/内容），匹配内部字段名永远 MISS；校验器重建对象非引用相等（deepEqual）；默认配置形态变化会破坏依赖默认配置的测试（改为与 config 一致的健壮断言）；OOC 模式需覆盖「作为语言模型」「I am an AI」形态；衰减只在有 routine 的 agent 上应用（executor 过滤），回归测试需配全天 routine；edit 大块替换吞闭包段会 TS1005。
+- **多英桀** ✅：默认配置新增梅比乌斯（差异化角色卡），chat 页选择器激活，e2e 多 agent 断言。
+- **OOC 泄露检测** ✅：oocGuard 纯函数 9 模式 4 标签（我是AI/作为语言模型/as an AI/I am an AI/游戏角色/虚拟存在/否认情感/I'm just a bot/说实话我是AI），宿主 chat/chatStream 双路径 analysisReason 追加 ooc-leak 标注；聊天页 SSE+JSON 双路径显示 ⚠️ 气泡（浏览器验证）。
+- **tick 轨情感签名** ✅：runLifeNarrative 接受 emotion，narrative 记忆带当前 affect 快照。
+- **剧情脚本** ✅：realm.json plotScript 按 period 自动投喂；修复 affinity 小数×INTEGER 列崩溃（storeAffinity round）。
+- **角色化性情基线** ✅：persona.baseline（ACT 人因而异），tick 首轮初始化 affect，衰减回归目标因人而异。
+- **叙事情感注入** ✅：lifeNarrative prompt 注入 describeAffectState 当前情感描述。
+- **对话情感闭环** ✅：宿主以权重把对话 emotion 签名逼近 AffectState（blendConversationEmotion，plot 仍主导）。
+- **性格调制** ✅：persona.affectModifiers 按事件类型缩放情感/亲和响应（爱莉希雅珍惜夸奖/梅比乌斯记仇）。
+- **关系弧线叙事** ✅：relationship_history 表 + 夜间反思注入当日关系轨迹。
+- **对话关系感知** ✅：prompt 注入 Relationship trajectory 行（≥2 条且首末不同）。
+- **情绪驱动行为** ✅：routine 可选 mood 偏好，宿主按 affect 象限选例程（低落时待家里/独处实验室）。
+- **反思可见化** ✅：state 摘要 latestReflection + 聊天页「🌙 她最近在想」（浏览器验证）。
+- **情绪外露度** ✅：persona.emotionResponsiveness 调制对话情感闭环权重（爱莉希雅 0.15/梅比乌斯 0.05）。
+- **参与者画像** ✅：user/participant 可选 profile 注入「About 主人」节。
+- **度量覆盖** ✅：measure 8 场景（日常问候/结构化全要素/情感注入/关系与记忆/OOC 红线/梅比乌斯差异化/关系轨迹/参与者画像）内容级 needle 全 HIT；checks.sh 全量测试门禁。
+- **e2e** ✅：verify-sse 13 项（含多 agent 断言、relationship_history 落库断言）。
+- 死路/教训（勿重复）：measure needle 须匹配 prompt 实际输出文本（节标题/内容），匹配内部字段名永远 MISS；校验器重建对象非引用相等（deepEqual）；默认配置形态变化会破坏依赖默认配置的测试（改与 config 一致的健壮断言）；ESM 测试不能用 require；async 方法 void 调用竞态（须 await）；edit 大块替换残留闭括号 TS1128；destructure 漏新字段 ReferenceError；浮点断言需容差；同 day 同 period 不重复 tick；hostile_act 一次只到 -0.15 边界需两次；fakeRunner 需带 affinityDelta 才移动关系。
