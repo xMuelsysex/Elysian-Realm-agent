@@ -41,15 +41,15 @@
 
 ## What's Been Tried
 
-（2026-08-10 战役一：P1-P4 完成）
+（2026-08-10 战役一~四全部完成，fidelity 36→100，tests 177→196，verify:e2e 10→12 项）
 
 - **P1 结构化角色契约** ✅：`RealmStructuredPersonaV1`（identity/personality/values/speechStyle/boundaries/behaviorTraits/exampleLines），realm.json + DEFAULT_REALM_CONFIG 升级爱莉希雅角色卡（往世乐土设定+♪+OOC 红线），字符串 persona 兼容（旧路径逐字节不变）。
 - **P2 说话风格注入** ✅：personaSections 纯函数分块渲染，对话 prompt 注入 Speech style + Speech examples（few-shot 口吻锚）。
 - **P3 OOC 红线** ✅：boundaries 注入「Character boundaries (never break these)」节，正向表述。
 - **P4 叙事/反思复用** ✅：lifeNarrative + llmReflectionPlanner 共用 personaSections（tick 轨也吃角色契约）。
-- **双校验器**：realmState.validatePersona + conversationExecutor.validatePersona（同规则，可选数组默认 []，渲染必须 ?? [] 容错）。
-- **测试**：characterContract.test.ts 8 条（分块/兼容/缺字段/校验拒绝/叙事反思注入）。185 tests 全绿；verify:e2e 10 项 PASS（宿主全链路零破坏）。
-- **指标**：fidelity 36→100（measure 缺陷修正：needle 匹配 prompt 节标题与内容，非内部字段名）；prompt_bytes 3102→5217（信息密度合理增加）。
-- 死路/教训：measure 场景 persona 缺必填字段会崩渲染函数（可选数组 ?? []）；校验器重建对象非引用相等（deepEqual）。
-
-待探索（ideas.md）：P5 角色自我认知记忆（延后，YAGNI）；行为倾向数值化权重（不引入，保持描述注入）。
+- **多英桀** ✅：默认配置新增梅比乌斯（差异化角色卡），chat 页选择器激活，e2e 多 agent 断言（state 列出 + 独立聊天 + 历史持久化）。
+- **OOC 泄露检测** ✅：src/conversation/oocGuard.ts 纯函数 detectOocLeak（中英泄露形态），宿主 chat/chatStream 双路径 analysisReason 追加 ooc-leak 标注（不拦截，只让泄露可见）。
+- **tick 轨情感签名** ✅：runLifeNarrative 接受 emotion，宿主 runNarratives 把当前 affect 快照打进 narrative 记忆——tick/对话两轨都带情感签名。
+- **剧情脚本** ✅（affect.md 最后候选）：realm.json plotScript 按 period 自动投喂 PlotEvent；修复 affinity 小数×INTEGER 列崩溃 bug（storeAffinity round）。
+- **测试**：characterContract.test.ts 10 条 + oocGuard.test.ts 9 条。196 tests 全绿；verify:e2e 12 项 PASS。
+- 死路/教训：measure needle 须匹配 prompt 实际输出（节标题/内容），匹配内部字段名永远 MISS；校验器重建对象非引用相等（deepEqual）；默认配置形态变化会破坏依赖默认配置的测试（改为与 config 一致的健壮断言）；OOC 模式需覆盖「作为语言模型」「I am an AI」形态。
