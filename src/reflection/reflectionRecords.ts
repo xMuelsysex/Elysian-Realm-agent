@@ -1,5 +1,6 @@
 import type { LlmRequestOptionsLike } from "../ports/ports.js";
 import type { MemoryRecord, MemoryWrite } from "../memory/memoryRecords.js";
+import type { SelfConceptProposalV1 } from "../selfConcept/selfConceptRecords.js";
 
 export const REFLECTION_TRIGGER_KINDS = [
   "importance-threshold",
@@ -44,6 +45,10 @@ export interface ReflectionPlannerOutput<ReflectionMetadata = Record<string, unk
   source: ReflectionOutputSource;
   insights: readonly ReflectionInsightOutput<ReflectionMetadata>[];
   reason: string;
+  /** Optional proposal; only the nightly host path may apply it. */
+  selfConceptProposal?: SelfConceptProposalV1;
+  /** Redacted parse diagnostic; valid insights remain usable when present. */
+  selfConceptProposalError?: string;
 }
 
 export interface ReflectionPlanner<
@@ -68,6 +73,8 @@ export interface ReflectionResult<ReflectionMetadata = Record<string, unknown>> 
   status: ReflectionStatus;
   memoryWrites: readonly MemoryWrite<ReflectionMetadata>[];
   diagnostics: readonly ReflectionDiagnostic[];
+  selfConceptProposal?: SelfConceptProposalV1;
+  selfConceptProposalError?: string;
 }
 
 export interface NormalizedReflectionInsight<ReflectionMetadata = Record<string, unknown>> {
@@ -82,4 +89,6 @@ export interface NormalizedReflectionPlannerOutput<ReflectionMetadata = Record<s
   source: ReflectionOutputSource;
   insights: readonly NormalizedReflectionInsight<ReflectionMetadata>[];
   reason: string;
+  selfConceptProposal?: SelfConceptProposalV1;
+  selfConceptProposalError?: string;
 }

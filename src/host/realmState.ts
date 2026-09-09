@@ -36,6 +36,21 @@ import type {
   RealmMemoryMetadataV1,
   RealmRoutinePeriodV1,
 } from "../service/realmStepV1.js";
+import {
+  SELF_CONCEPT_AUDIT_SCHEMA_VERSION,
+  SELF_CONCEPT_PROPOSAL_SCHEMA_VERSION,
+  SELF_CONCEPT_SNAPSHOT_SCHEMA_VERSION,
+  SelfConceptValidationError,
+  validateSelfConceptAuditPayload,
+  validateSelfConceptProposal,
+  validateSelfConceptSnapshot,
+  type SelfConceptAuditEventTypeV1,
+  type SelfConceptAuditEventV1,
+  type SelfConceptAuditPayloadV1,
+  type SelfConceptDecisionReportV1,
+  type SelfConceptProposalV1,
+  type SelfConceptSnapshotV1,
+} from "../selfConcept/selfConceptRecords.js";
 
 export interface RealmRoutineConfig {
   period: RealmRoutinePeriodV1;
@@ -262,6 +277,30 @@ interface ConversationRow {
   at: string | null;
 }
 
+interface SelfConceptSnapshotRow {
+  agent_id: string;
+  revision: number;
+  accepted_at: string;
+  proposal_id: string;
+  snapshot_json: string;
+  source_memory_ids_json: string;
+}
+
+interface SelfConceptAuditRow {
+  event_id: number;
+  agent_id: string;
+  attempt_id: string;
+  proposal_id: string | null;
+  event_type: SelfConceptAuditEventTypeV1;
+  expected_revision: number | null;
+  observed_revision: number | null;
+  accepted_revision: number | null;
+  occurred_at: string;
+  diagnostic_code: string | null;
+  diagnostic_summary: string | null;
+  payload_json: string;
+}
+
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS memories (
   agent_id TEXT NOT NULL,
@@ -320,6 +359,46 @@ CREATE TABLE IF NOT EXISTS tick_state (
   date TEXT NOT NULL,
   period TEXT NOT NULL
 ) STRICT;
+CREATE TABLE IF NOT EXISTS self_concept_snapshots (
+  agent_id TEXT PRIMARY KEY,
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  accepted_at TEXT NOT NULL,
+  proposal_id TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  source_memory_ids_json TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS self_concept_proposal_audit (
+  event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id TEXT NOT NULL,
+  attempt_id TEXT NOT NULL,
+  proposal_id TEXT,
+  event_type TEXT NOT NULL CHECK (event_type IN ('attempt_started', 'accepted', 'rejected', 'evidence_invalid', 'revision_conflict', 'parse_failure', 'storage_failure')),
+  expected_revision INTEGER,
+  observed_revision INTEGER,
+  accepted_revision INTEGER,
+  occurred_at TEXT NOT NULL,
+  diagnostic_code TEXT,
+  diagnostic_summary TEXT,
+  payload_json TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_self_concept_audit_agent_event
+  ON self_concept_proposal_audit(agent_id, event_id);
+CREATE INDEX IF NOT EXISTS idx_self_concept_audit_agent_proposal_event
+  ON self_concept_proposal_audit(agent_id, proposal_id, event_id);
+CREATE INDEX IF NOT EXISTS idx_self_concept_audit_agent_type_event
+  ON self_concept_proposal_audit(agent_id, event_type, event_id);
+CREATE INDEX IF NOT EXISTS idx_self_concept_audit_attempt_event
+  ON self_concept_proposal_audit(attempt_id, event_id);
+CREATE TRIGGER IF NOT EXISTS self_concept_audit_no_update
+BEFORE UPDATE ON self_concept_proposal_audit
+BEGIN
+  SELECT RAISE(ABORT, 'self-concept audit is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS self_concept_audit_no_delete
+BEFORE DELETE ON self_concept_proposal_audit
+BEGIN
+  SELECT RAISE(ABORT, 'self-concept audit is append-only');
+END;
 `;
 
 /**
@@ -376,6 +455,217 @@ export class RealmStateStore {
 
   memoriesFor(agentId: string): readonly MemoryRecord<RealmMemoryMetadataV1>[] {
     return this.memoryStore(agentId).list(agentId);
+  }
+
+  getSelfConceptSnapshot(agentId: string): SelfConceptSnapshotV1 | undefined {
+    this.agent(agentId);
+    const row = this.db
+      .prepare(
+        "SELECT agent_id, revision, accepted_at, proposal_id, snapshot_json, source_memory_ids_json FROM self_concept_snapshots WHERE agent_id = ?",
+      )
+      .get(agentId) as SelfConceptSnapshotRow | undefined;
+    if (!row) return undefined;
+    return validateSelfConceptSnapshot(this.parseJson<unknown>(row.snapshot_json, `self_concept_snapshots.${agentId}.snapshot_json`));
+  }
+
+  appendSelfConceptAttemptStarted(
+    agentId: string,
+    attemptId: string,
+    proposalId: string | undefined,
+    at: string,
+  ): void {
+    this.agent(agentId);
+    this.appendSelfConceptAudit({
+      agentId,
+      attemptId,
+      ...(proposalId !== undefined ? { proposalId } : {}),
+      eventType: "attempt_started",
+      occurredAt: at,
+      payload: { schemaVersion: SELF_CONCEPT_AUDIT_SCHEMA_VERSION },
+    });
+  }
+
+  appendSelfConceptDecisionAudit(
+    agentId: string,
+    attemptId: string,
+    eventType: Exclude<SelfConceptAuditEventTypeV1, "attempt_started" | "accepted" | "revision_conflict">,
+    at: string,
+    payload: SelfConceptAuditPayloadV1,
+    proposalId?: string,
+  ): void {
+    this.agent(agentId);
+    this.appendSelfConceptAudit({
+      agentId,
+      attemptId,
+      ...(proposalId !== undefined ? { proposalId } : {}),
+      eventType,
+      occurredAt: at,
+      payload,
+    });
+  }
+
+  applySelfConceptProposal(
+    agentId: string,
+    proposalInput: unknown,
+    at: string,
+    attemptId = `attempt_${at}_${agentId}`,
+  ): SelfConceptDecisionReportV1 {
+    this.agent(agentId);
+    let proposal: SelfConceptProposalV1;
+    try {
+      proposal = validateSelfConceptProposal(proposalInput);
+    } catch (error) {
+      const code = error instanceof SelfConceptValidationError ? error.code : "invalid_proposal";
+      this.appendSelfConceptAudit({
+        agentId,
+        attemptId,
+        eventType: "rejected",
+        occurredAt: at,
+        payload: {
+          schemaVersion: SELF_CONCEPT_AUDIT_SCHEMA_VERSION,
+          failureClass: code,
+        },
+      });
+      return { outcome: "rejected", code };
+    }
+    const knownMemoryIds = new Set(this.memoryStore(agentId).list(agentId).map((memory) => memory.id));
+    const invalidEvidenceFields = proposal.sourceMemoryIds
+      .filter((memoryId) => !knownMemoryIds.has(memoryId))
+      .map((memoryId) => `sourceMemoryIds:${memoryId}`);
+    if (invalidEvidenceFields.length > 0) {
+      this.appendSelfConceptAudit({
+        agentId,
+        attemptId,
+        proposalId: proposal.proposalId,
+        eventType: "evidence_invalid",
+        occurredAt: at,
+        payload: {
+          schemaVersion: SELF_CONCEPT_AUDIT_SCHEMA_VERSION,
+          sourceMemoryCount: proposal.sourceMemoryIds.length,
+          invalidFields: invalidEvidenceFields.slice(0, 16),
+          failureClass: "missing_source_memory",
+        },
+      });
+      return {
+        outcome: "evidence_invalid",
+        code: "missing_source_memory",
+        proposalId: proposal.proposalId,
+      };
+    }
+    const current = this.db
+      .prepare("SELECT revision FROM self_concept_snapshots WHERE agent_id = ?")
+      .get(agentId) as { revision: number } | undefined;
+    const observedRevision = current?.revision ?? 0;
+    const snapshot: SelfConceptSnapshotV1 = {
+      schemaVersion: SELF_CONCEPT_SNAPSHOT_SCHEMA_VERSION,
+      revision: observedRevision + 1,
+      acceptedAt: at,
+      proposalId: proposal.proposalId,
+      summary: proposal.summary,
+      sourceMemoryIds: [...proposal.sourceMemoryIds],
+      beliefs: proposal.beliefs.map((belief) => ({ ...belief, sourceMemoryIds: [...belief.sourceMemoryIds] })),
+    };
+    validateSelfConceptSnapshot(snapshot);
+    const payload: SelfConceptAuditPayloadV1 = {
+      schemaVersion: SELF_CONCEPT_AUDIT_SCHEMA_VERSION,
+      beliefCount: proposal.beliefs.length,
+      sourceMemoryCount: proposal.sourceMemoryIds.length,
+      expectedRevision: proposal.expectedRevision,
+      observedRevision,
+      acceptedRevision: snapshot.revision,
+    };
+    if (proposal.expectedRevision !== observedRevision) {
+      this.appendSelfConceptAudit({
+        agentId,
+        attemptId,
+        proposalId: proposal.proposalId,
+        eventType: "revision_conflict",
+        expectedRevision: proposal.expectedRevision,
+        observedRevision,
+        occurredAt: at,
+        payload: { ...payload, acceptedRevision: undefined },
+      });
+      return {
+        outcome: "revision_conflict",
+        expectedRevision: proposal.expectedRevision,
+        observedRevision,
+        proposalId: proposal.proposalId,
+      };
+    }
+    try {
+      this.inTransaction(() => {
+        if (observedRevision === 0) {
+          const inserted = this.db.prepare(
+            "INSERT INTO self_concept_snapshots (agent_id, revision, accepted_at, proposal_id, snapshot_json, source_memory_ids_json) SELECT ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM self_concept_snapshots WHERE agent_id = ?)",
+          ).run(agentId, snapshot.revision, at, proposal.proposalId, JSON.stringify(snapshot), JSON.stringify(snapshot.sourceMemoryIds), agentId);
+          if (Number(inserted.changes) !== 1) throw new RealmStateError("self-concept revision conflict");
+        } else {
+          const updated = this.db.prepare(
+            "UPDATE self_concept_snapshots SET revision = ?, accepted_at = ?, proposal_id = ?, snapshot_json = ?, source_memory_ids_json = ? WHERE agent_id = ? AND revision = ?",
+          ).run(snapshot.revision, at, proposal.proposalId, JSON.stringify(snapshot), JSON.stringify(snapshot.sourceMemoryIds), agentId, proposal.expectedRevision);
+          if (Number(updated.changes) !== 1) throw new RealmStateError("self-concept revision conflict");
+        }
+        this.insertSelfConceptAudit({
+          agentId,
+          attemptId,
+          proposalId: proposal.proposalId,
+          eventType: "accepted",
+          occurredAt: at,
+          acceptedRevision: snapshot.revision,
+          payload,
+        });
+      });
+    } catch (error) {
+      if (error instanceof RealmStateError && error.message.includes("revision conflict")) {
+        const latest = this.db.prepare("SELECT revision FROM self_concept_snapshots WHERE agent_id = ?").get(agentId) as { revision: number } | undefined;
+        const latestRevision = latest?.revision ?? 0;
+        this.appendSelfConceptAudit({ agentId, attemptId, proposalId: proposal.proposalId, eventType: "revision_conflict", expectedRevision: proposal.expectedRevision, observedRevision: latestRevision, occurredAt: at, payload: { ...payload, observedRevision: latestRevision, acceptedRevision: undefined } });
+        return { outcome: "revision_conflict", expectedRevision: proposal.expectedRevision, observedRevision: latestRevision, proposalId: proposal.proposalId };
+      }
+      try {
+        this.appendSelfConceptAudit({ agentId, attemptId, proposalId: proposal.proposalId, eventType: "storage_failure", occurredAt: at, payload: { ...payload, failureClass: "storage_failure", acceptedRevision: undefined } });
+      } catch { /* preserve the original storage failure */ }
+      return { outcome: "storage_failure", code: "storage_failure", proposalId: proposal.proposalId };
+    }
+    return { outcome: "accepted", revision: snapshot.revision, proposalId: proposal.proposalId };
+  }
+
+  listSelfConceptAudit(
+    agentId: string,
+    options: { afterEventId?: number; limit?: number; eventType?: SelfConceptAuditEventTypeV1; proposalId?: string } = {},
+  ): readonly SelfConceptAuditEventV1[] {
+    this.agent(agentId);
+    const limit = Math.min(100, Math.max(1, Math.trunc(options.limit ?? 50)));
+    const clauses = ["agent_id = ?"];
+    const params: Array<string | number> = [agentId];
+    if (options.afterEventId !== undefined) { clauses.push("event_id > ?"); params.push(options.afterEventId); }
+    if (options.eventType !== undefined) { clauses.push("event_type = ?"); params.push(options.eventType); }
+    if (options.proposalId !== undefined) { clauses.push("proposal_id = ?"); params.push(options.proposalId); }
+    params.push(limit);
+    const rows = this.db.prepare(`SELECT event_id, agent_id, attempt_id, proposal_id, event_type, expected_revision, observed_revision, accepted_revision, occurred_at, diagnostic_code, diagnostic_summary, payload_json FROM self_concept_proposal_audit WHERE ${clauses.join(" AND ")} ORDER BY event_id ASC LIMIT ?`).all(...params) as unknown as SelfConceptAuditRow[];
+    return rows.map((row) => ({
+      eventId: row.event_id,
+      agentId: row.agent_id,
+      attemptId: row.attempt_id,
+      ...(row.proposal_id !== null ? { proposalId: row.proposal_id } : {}),
+      eventType: row.event_type,
+      ...(row.expected_revision !== null ? { expectedRevision: row.expected_revision } : {}),
+      ...(row.observed_revision !== null ? { observedRevision: row.observed_revision } : {}),
+      ...(row.accepted_revision !== null ? { acceptedRevision: row.accepted_revision } : {}),
+      occurredAt: row.occurred_at,
+      ...(row.diagnostic_code !== null ? { diagnosticCode: row.diagnostic_code } : {}),
+      ...(row.diagnostic_summary !== null ? { diagnosticSummary: row.diagnostic_summary } : {}),
+      payload: validateSelfConceptAuditPayload(this.parseJson<unknown>(row.payload_json, `self_concept_proposal_audit.${row.event_id}.payload_json`)),
+    }));
+  }
+
+  reconcileIncompleteSelfConceptAttempts(agentId: string, at: string): number {
+    this.agent(agentId);
+    const rows = this.db.prepare("SELECT attempt_id, proposal_id FROM self_concept_proposal_audit WHERE agent_id = ? GROUP BY attempt_id HAVING SUM(CASE WHEN event_type IN ('accepted','rejected','evidence_invalid','revision_conflict','parse_failure','storage_failure') THEN 1 ELSE 0 END) = 0").all(agentId) as unknown as Array<{ attempt_id: string; proposal_id: string | null }>;
+    for (const row of rows) {
+      this.appendSelfConceptAudit({ agentId, attemptId: row.attempt_id, ...(row.proposal_id !== null ? { proposalId: row.proposal_id } : {}), eventType: "storage_failure", occurredAt: at, payload: { schemaVersion: SELF_CONCEPT_AUDIT_SCHEMA_VERSION, failureClass: "incomplete_attempt_reconciled" } });
+    }
+    return rows.length;
   }
 
   relationship(agentId: string): RelationshipAffect | undefined {
@@ -938,6 +1228,53 @@ export class RealmStateStore {
         )
         .run(mood.agentId, mood.mood, mood.intensity, mood.updatedAt);
     }
+  }
+
+  private appendSelfConceptAudit(input: {
+    agentId: string;
+    attemptId: string;
+    proposalId?: string;
+    eventType: SelfConceptAuditEventTypeV1;
+    expectedRevision?: number;
+    observedRevision?: number;
+    acceptedRevision?: number;
+    occurredAt: string;
+    diagnosticCode?: string;
+    diagnosticSummary?: string;
+    payload: SelfConceptAuditPayloadV1;
+  }): void {
+    this.inTransaction(() => this.insertSelfConceptAudit(input));
+  }
+
+  private insertSelfConceptAudit(input: {
+    agentId: string;
+    attemptId: string;
+    proposalId?: string;
+    eventType: SelfConceptAuditEventTypeV1;
+    expectedRevision?: number;
+    observedRevision?: number;
+    acceptedRevision?: number;
+    occurredAt: string;
+    diagnosticCode?: string;
+    diagnosticSummary?: string;
+    payload: SelfConceptAuditPayloadV1;
+  }): void {
+    const payload = validateSelfConceptAuditPayload(input.payload);
+    this.db.prepare(
+      "INSERT INTO self_concept_proposal_audit (agent_id, attempt_id, proposal_id, event_type, expected_revision, observed_revision, accepted_revision, occurred_at, diagnostic_code, diagnostic_summary, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      input.agentId,
+      input.attemptId,
+      input.proposalId ?? null,
+      input.eventType,
+      input.expectedRevision ?? null,
+      input.observedRevision ?? null,
+      input.acceptedRevision ?? null,
+      input.occurredAt,
+      input.diagnosticCode ?? null,
+      input.diagnosticSummary ?? null,
+      JSON.stringify(payload),
+    );
   }
 
   private inTransaction<T>(fn: () => T): T {

@@ -8,6 +8,8 @@
 import type { AffectState, AgentMood, RelationshipAffect } from "../affect/affectRecords.js";
 import type { EmotionSignature, MemoryWrite } from "../memory/memoryRecords.js";
 import type { RealmMemoryMetadataV1, RealmMemoryRecordV1 } from "./realmStepV1.js";
+import type { SelfConceptSnapshotV1 } from "../selfConcept/selfConceptRecords.js";
+import type { LoreEntryV1 } from "../lore/loreRecords.js";
 
 export const REALM_CONVERSATION_SCHEMA_VERSION = "realm-conversation.v1" as const;
 
@@ -85,6 +87,7 @@ export interface RealmConversationMessageV1 {
 
 export interface RealmConversationOptionsV1 {
   memoryTopK?: number;
+  loreTopK?: number;
 }
 
 export interface RealmConversationRequestV1 {
@@ -106,6 +109,10 @@ export interface RealmConversationRequestV1 {
   mood?: AgentMood;
   /** The agent's current plot-driven emotional state, if established. */
   affect?: AffectState;
+  /** Host-approved derived self-concept; absent until nightly reflection accepts one. */
+  selfConcept?: SelfConceptSnapshotV1;
+  /** Curated world canon supplied by the host; never written to personal memory. */
+  lore?: readonly LoreEntryV1[];
   /** Prior turns of this conversation, oldest first. */
   history: readonly RealmConversationTurnV1[];
   /** The new incoming participant message to answer. */

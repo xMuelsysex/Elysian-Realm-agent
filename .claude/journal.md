@@ -1,5 +1,25 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-09-05 Lore review findings 修复
+
+- 按独立审查确认的 RV-001～RV-005 完成一次性修复：对话 Lore 查询带最近两条 participant 历史；检索和渲染排序使用固定 code-unit 规则；生活叙事/夜间反思不再用角色名单独触发 Canon；Lore 输入、topK、数组、控制字符与 Prompt 预算有显式边界；Canon provenance 输出精确 sourceUrl/canonVersion。
+- 新增对应回归测试，覆盖指代追问、非 ASCII tie-break、Host 两条检索轨、恶意/超限输入和来源语义。
+- 验证：`npm run build`、`npm run typecheck`、TS5.9 兼容测试编译（`--ignoreDeprecations 5.0`）及完整离线单测 275 项全绿，`git diff --check` 通过。标准 `npm test` 仍受既有 TS5090/TS5102 测试配置问题阻断；未改无关配置，未执行真实 LLM E2E。
+
+## 2026-09-05 往世乐土正史知识层
+
+- 新分支 `feature/elysian-realm-lore` 新增独立、只读、版本化的 `src/lore/`：公开网页摘要形成初始 Canon，保留来源 URL；CJK/ASCII 本地词法检索按 `knownTo` 过滤，零相关条目不注入。
+- Canon 与 `MemoryRecord` 分离；对话、生活叙事、夜间反思统一注入 `Canonical story context (read-only; not personal memory)`，并保留故事条目因果顺序，避免把正史冒充个人经历。
+- Host 默认加载并校验往世乐土语料，也允许测试/宿主传入自定义语料；`realm-conversation.v1` 新增可选 lore 与 `loreTopK`，旧请求保持兼容。
+- 验证：`npm run build`、`npm run typecheck`、`git diff --check` 通过；完整离线单测 271 项通过（TS5.9 测试编译使用 `--ignoreDeprecations 5.0`）。标准 `npm test` 仍受现有 TS5090/TS5102 配置兼容错误阻断，未改无关配置。
+
+## 2026-08-23 自我认知成长首版
+
+- self-concept 独立于 realm.json persona 与普通经历记忆，由 RealmStateStore 持有版本化 snapshot；proposal 由 nightly reflection 产生，宿主通过证据归属校验与 CAS 决定是否应用。
+- SQLite 增加 self-concept snapshot 与 append-only proposal audit；完整审计保存结构化脱敏 payload，非法 proposal 记录 `parse_failure`，缺失证据记录 `evidence_invalid`，CAS 冲突记录 `revision_conflict` 并等待下一次 nightly。
+- 批准 snapshot 只读注入 conversation、life narrative、nightly reflection 三条 prompt 轨；非法 self-concept proposal 不阻断同一 reflection 中合法 memory writes。
+- 验证：`npm run typecheck` 通过；`npm run verify` 通过（263 项单测、14 项离线 E2E）。
+
 ## 2026-08-10 二十二轮补二十三：参与者情绪输入（autoresearch 战役二十九）
 
 - message 可选 emotion{valence,arousal}（校验 -1..1/0..1）；透传到 reply port，user 消息追加共情提示（down/in good spirits/composed）。双向情感感知：角色能感知对方情绪。+3 测试。243 tests 全绿。

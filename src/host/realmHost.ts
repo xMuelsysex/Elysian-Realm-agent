@@ -35,6 +35,14 @@ import type { RealmAffectProposalV1 } from "../service/realmStepV1.js";
 import { runLifeNarrative } from "./lifeNarrative.js";
 import { detectOocLeak } from "../conversation/oocGuard.js";
 import type { RealmRoutineConfig, RealmStateStore, RealmStoreStats, RealmPersonaConfig } from "./realmState.js";
+import { SELF_CONCEPT_AUDIT_SCHEMA_VERSION } from "../selfConcept/selfConceptRecords.js";
+import { ELYSIAN_REALM_CANON } from "../lore/elysianRealmCanon.js";
+import { retrieveLoreEntries } from "../lore/loreRetrieval.js";
+import {
+  DEFAULT_LORE_RETRIEVAL_TOP_K,
+  validateLoreEntries,
+  type LoreEntryV1,
+} from "../lore/loreRecords.js";
 
 const CHAT_HISTORY_WINDOW = 20;
 const RELATIONSHIP_HISTORY_WINDOW = 20;
@@ -70,6 +78,8 @@ export interface RealmHostOptions {
   now?: () => Date;
   /** LLM for life narratives and nightly reflection; absent = deterministic-only ticks. */
   llm?: () => LlmPort | undefined;
+  /** Curated read-only world canon; defaults to the bundled Elysian Realm canon. */
+  lore?: readonly LoreEntryV1[];
 }
 
 export interface RealmTickReport {
@@ -149,6 +159,7 @@ export class RealmHost {
   private readonly runner: () => ConversationRunner | undefined;
   private readonly llm: () => LlmPort | undefined;
   private readonly now: () => Date;
+  private readonly lore: readonly LoreEntryV1[];
   private chatCounter = 0;
   private eventCounter = 0;
 
@@ -161,6 +172,7 @@ export class RealmHost {
     this.runner = runner;
     this.llm = options.llm ?? (() => undefined);
     this.now = options.now ?? (() => new Date());
+    this.lore = validateLoreEntries(options.lore ?? ELYSIAN_REALM_CANON);
   }
 
   listAgents(): RealmAgentSummary[] {
@@ -228,6 +240,8 @@ export class RealmHost {
       relationship: this.state.relationship(agentId),
       mood: this.state.mood(agentId),
       affect: this.state.affectState(agentId),
+      selfConcept: this.state.getSelfConceptSnapshot(agentId),
+      lore: this.lore,
       history: this.state.historyFor(agentId, CHAT_HISTORY_WINDOW),
       message: { messageId, content: trimmed },
     });
@@ -301,6 +315,8 @@ export class RealmHost {
       relationshipHistory: this.state.relationshipHistory(agentId).slice(-RELATIONSHIP_HISTORY_WINDOW),
       mood: this.state.mood(agentId),
       affect: this.state.affectState(agentId),
+      selfConcept: this.state.getSelfConceptSnapshot(agentId),
+      lore: this.lore,
       history: this.state.historyFor(agentId, CHAT_HISTORY_WINDOW),
       message: { messageId, content: trimmed },
     };
@@ -399,6 +415,11 @@ export class RealmHost {
         dayHistory.length >= 2 && dayHistory[0].affinity !== dayHistory[dayHistory.length - 1].affinity
           ? `Relationship today: your bond with ${this.state.config.user.displayName} moved from ${dayHistory[0].affinity} to ${dayHistory[dayHistory.length - 1].affinity} (scale -100..100).`
           : undefined;
+      const loreHits = retrieveLoreEntries(this.lore, {
+        agentId: agent.agentId,
+        text: [routine.intent, ...recentNarratives].join("\n"),
+        topK: DEFAULT_LORE_RETRIEVAL_TOP_K,
+      }).hits;
       const result = await runLifeNarrative(llm, {
         agentId: agent.agentId,
         displayName: agent.displayName,
@@ -410,6 +431,8 @@ export class RealmHost {
         recentNarratives,
         ...(affect !== undefined ? { affect, emotion: { valence: affect.valence, arousal: affect.arousal } } : {}),
         ...(relationshipArc !== undefined ? { relationshipArc } : {}),
+        loreHits,
+        selfConcept: this.state.getSelfConceptSnapshot(agent.agentId),
       });
       if ("write" in result) {
         // OOC guard covers every LLM output surface: a diary that breaks
@@ -454,11 +477,18 @@ export class RealmHost {
         history.length >= 2 && history[0].affinity !== history[history.length - 1].affinity
           ? `Relationship arc today: your bond with ${this.state.config.user.displayName} moved from ${history[0].affinity} to ${history[history.length - 1].affinity} (scale -100..100).`
           : undefined;
+      const loreHits = retrieveLoreEntries(this.lore, {
+        agentId: agent.agentId,
+        text: evidence.map((record) => record.content).join("\n"),
+        topK: DEFAULT_LORE_RETRIEVAL_TOP_K,
+      }).hits;
 
       const planner = createLlmReflectionPlanner<RealmMemoryMetadataV1>(llm, {
         personaName: agent.displayName,
         persona: agent.persona,
         ...(relationshipArc !== undefined ? { relationshipArc } : {}),
+        loreHits,
+        selfConcept: this.state.getSelfConceptSnapshot(agent.agentId),
       });
       const reflection = await runReflection(
         {
@@ -473,6 +503,40 @@ export class RealmHost {
         },
         planner,
       );
+
+      const attemptId = `reflection_${now}_${agent.agentId}`;
+      if (reflection.selfConceptProposalError !== undefined) {
+        this.state.appendSelfConceptDecisionAudit(
+          agent.agentId,
+          attemptId,
+          "parse_failure",
+          now,
+          {
+            schemaVersion: SELF_CONCEPT_AUDIT_SCHEMA_VERSION,
+            failureClass: reflection.selfConceptProposalError,
+          },
+        );
+        notes.push(`${agent.agentId}: self-concept proposal ${reflection.selfConceptProposalError}`);
+      }
+      if (reflection.selfConceptProposal !== undefined) {
+        this.state.appendSelfConceptAttemptStarted(
+          agent.agentId,
+          attemptId,
+          reflection.selfConceptProposal.proposalId,
+          now,
+        );
+        const decision = this.state.applySelfConceptProposal(
+          agent.agentId,
+          reflection.selfConceptProposal,
+          now,
+          attemptId,
+        );
+        if (decision.outcome === "revision_conflict") {
+          notes.push(`${agent.agentId}: self-concept revision conflict at ${decision.observedRevision}`);
+        } else if (decision.outcome !== "accepted") {
+          notes.push(`${agent.agentId}: self-concept ${decision.outcome}`);
+        }
+      }
 
       if (reflection.status === "completed" && reflection.memoryWrites.length > 0) {
         // The generic planner leaves metadata empty; stamp the realm metadata

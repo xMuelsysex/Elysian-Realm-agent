@@ -15,6 +15,12 @@ import type {
   ConversationRunner,
 } from "../conversation/conversationRunner.js";
 import {
+  LORE_MAX_TOP_K,
+  LoreValidationError,
+  validateLoreEntries,
+  type LoreEntryV1,
+} from "../lore/loreRecords.js";
+import {
   REALM_CONVERSATION_SCHEMA_VERSION,
   type RealmConversationAgentV1,
   type RealmConversationMessageV1,
@@ -70,6 +76,7 @@ export function validateRealmConversationRequestV1(input: unknown): RealmConvers
   const history = validateHistory(input.history);
   const message = validateMessage(input.message);
   const options = validateOptions(input.options);
+  const lore = validateLore(input.lore);
 
   return {
     schemaVersion: REALM_CONVERSATION_SCHEMA_VERSION,
@@ -82,6 +89,7 @@ export function validateRealmConversationRequestV1(input: unknown): RealmConvers
     ...(relationshipHistory ? { relationshipHistory } : {}),
     ...(mood ? { mood } : {}),
     ...(affect ? { affect } : {}),
+    ...(lore ? { lore } : {}),
     history,
     message,
     ...(options ? { options } : {}),
@@ -360,13 +368,36 @@ function validateOptions(input: unknown): RealmConversationOptionsV1 | undefined
   if (!isRecord(input)) {
     throw new RealmConversationValidationError("options must be an object");
   }
-  if (input.memoryTopK === undefined) {
+  if (input.memoryTopK === undefined && input.loreTopK === undefined) {
     return {};
   }
-  if (!Number.isInteger(input.memoryTopK) || (input.memoryTopK as number) <= 0) {
+  if (input.memoryTopK !== undefined && (!Number.isInteger(input.memoryTopK) || (input.memoryTopK as number) <= 0)) {
     throw new RealmConversationValidationError("options.memoryTopK must be a positive integer");
   }
-  return { memoryTopK: input.memoryTopK as number };
+  if (
+    input.loreTopK !== undefined &&
+    (!Number.isInteger(input.loreTopK) || (input.loreTopK as number) <= 0 || (input.loreTopK as number) > LORE_MAX_TOP_K)
+  ) {
+    throw new RealmConversationValidationError(`options.loreTopK must be an integer from 1 to ${LORE_MAX_TOP_K}`);
+  }
+  return {
+    ...(input.memoryTopK !== undefined ? { memoryTopK: input.memoryTopK as number } : {}),
+    ...(input.loreTopK !== undefined ? { loreTopK: input.loreTopK as number } : {}),
+  };
+}
+
+function validateLore(input: unknown): readonly LoreEntryV1[] | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  try {
+    return validateLoreEntries(input);
+  } catch (error) {
+    if (error instanceof LoreValidationError) {
+      throw new RealmConversationValidationError(`lore is invalid: ${error.message}`);
+    }
+    throw error;
+  }
 }
 
 function toValidationError(error: unknown, path: string): RealmConversationValidationError {

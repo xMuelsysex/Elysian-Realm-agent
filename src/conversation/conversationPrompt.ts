@@ -10,6 +10,10 @@ import type {
   RealmConversationParticipantV1,
   RealmStructuredPersonaV1,
 } from "../service/realmConversationV1.js";
+import { serializeSelfConceptSnapshot } from "../selfConcept/selfConceptSerializer.js";
+import type { SelfConceptSnapshotV1 } from "../selfConcept/selfConceptRecords.js";
+import { renderLoreContext } from "../lore/lorePrompt.js";
+import type { LoreRetrievalHitV1 } from "../lore/loreRecords.js";
 
 export interface ConversationPromptInput<Metadata = Record<string, unknown>> {
   agent: RealmConversationAgentV1;
@@ -21,10 +25,13 @@ export interface ConversationPromptInput<Metadata = Record<string, unknown>> {
   /** Plot-driven emotional state snapshot, when the host tracks one. */
   affect?: AffectState;
   memoryHits: readonly MemoryRetrievalHit<Metadata>[];
+  /** Retrieved world canon; rendered separately from lived memories. */
+  loreHits?: readonly LoreRetrievalHitV1[];
   /** Current time; enables relative timestamps on memories and "time since last chat". */
   now?: string;
   /** Timestamp of the previous conversation turn, if the host tracks turns. */
   lastTurnAt?: string;
+  selfConcept?: SelfConceptSnapshotV1;
 }
 
 /** Deterministic affinity band label for prompt injection. */
@@ -160,7 +167,7 @@ export function personaSections(persona: string | RealmStructuredPersonaV1): str
 export function buildConversationSystemPrompt<Metadata>(
   input: ConversationPromptInput<Metadata>,
 ): string {
-  const { agent, participant, relationship, relationshipHistory, mood, affect, memoryHits, now, lastTurnAt } = input;
+  const { agent, participant, relationship, relationshipHistory, mood, affect, memoryHits, loreHits = [], now, lastTurnAt } = input;
 
   const sections: string[] = [
     `You are ${agent.displayName} (persona ${agent.personaId}), a character living in the Elysian Realm simulation.`,
@@ -198,6 +205,11 @@ export function buildConversationSystemPrompt<Metadata>(
     }
   }
 
+  const selfConceptSection = serializeSelfConceptSnapshot(input.selfConcept);
+  if (selfConceptSection !== undefined) {
+    sections.push(selfConceptSection);
+  }
+
   if (affect) {
     const affectLines = [`Current emotional state: ${describeAffectState(affect)}.`];
     const guidance = affectExpressionGuidance(affect);
@@ -205,6 +217,11 @@ export function buildConversationSystemPrompt<Metadata>(
       affectLines.push(guidance.join("; "));
     }
     sections.push(affectLines.join("\n"));
+  }
+
+  const loreContext = renderLoreContext(loreHits);
+  if (loreContext !== undefined) {
+    sections.push(loreContext);
   }
 
   if (memoryHits.length > 0) {

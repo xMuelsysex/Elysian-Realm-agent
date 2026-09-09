@@ -19,9 +19,12 @@ import {
 import type { RealmMemoryMetadataV1 } from "../service/realmStepV1.js";
 import { buildConversationSystemPrompt } from "./conversationPrompt.js";
 import { runAffectAnalysis } from "./affectAnalysis.js";
+import { retrieveLoreEntries } from "../lore/loreRetrieval.js";
+import { DEFAULT_LORE_RETRIEVAL_TOP_K } from "../lore/loreRecords.js";
 
 /** Base importance for routine conversation memories. */
 export const CONVERSATION_MEMORY_IMPORTANCE = 3;
+const LORE_HISTORY_QUERY_WINDOW = 2;
 
 export interface ConversationReplyInput {
   conversationId: string;
@@ -110,6 +113,21 @@ function buildReplyInput(request: RealmConversationRequestV1): ConversationReply
       : {}),
   });
 
+  const loreQueryText = [
+    ...request.history
+      .filter((turn) => turn.role === "participant")
+      .slice(-LORE_HISTORY_QUERY_WINDOW)
+      .map((turn) => turn.content),
+    request.message.content,
+  ].join("\n");
+  const loreHits = request.lore === undefined
+    ? []
+    : retrieveLoreEntries(request.lore, {
+        agentId: request.agent.agentId,
+        text: loreQueryText,
+        topK: request.options?.loreTopK ?? DEFAULT_LORE_RETRIEVAL_TOP_K,
+      }).hits;
+
   const lastTurnAt = [...request.history].reverse().find((turn) => turn.at !== undefined)?.at;
   const systemPrompt = buildConversationSystemPrompt({
     agent: request.agent,
@@ -118,7 +136,9 @@ function buildReplyInput(request: RealmConversationRequestV1): ConversationReply
     relationshipHistory: request.relationshipHistory,
     mood: request.mood,
     affect: request.affect,
+    selfConcept: request.selfConcept,
     memoryHits: retrieval.hits,
+    loreHits,
     now: request.now,
     ...(lastTurnAt !== undefined ? { lastTurnAt } : {}),
   });

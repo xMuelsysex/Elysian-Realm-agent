@@ -11,6 +11,10 @@ import { personaSections, describeAffectState } from "../conversation/conversati
 import type { AffectState } from "../affect/affectRecords.js";
 import type { RealmStructuredPersonaV1 } from "../service/realmConversationV1.js";
 import type { RealmMemoryMetadataV1, RealmRoutinePeriodV1 } from "../service/realmStepV1.js";
+import { serializeSelfConceptSnapshot } from "../selfConcept/selfConceptSerializer.js";
+import type { SelfConceptSnapshotV1 } from "../selfConcept/selfConceptRecords.js";
+import { renderLoreContext } from "../lore/lorePrompt.js";
+import type { LoreRetrievalHitV1 } from "../lore/loreRecords.js";
 
 export const LIFE_NARRATIVE_IMPORTANCE = 4;
 
@@ -30,16 +34,23 @@ export interface LifeNarrativeInput {
   affect?: AffectState;
   /** One-line relationship trajectory for the day, when it moved. */
   relationshipArc?: string;
+  /** Retrieved world canon, kept separate from the diary's lived memories. */
+  loreHits?: readonly LoreRetrievalHitV1[];
+  selfConcept?: SelfConceptSnapshotV1;
 }
 
 export function buildLifeNarrativeMessages(input: LifeNarrativeInput): {
   system: string;
   user: string;
 } {
+  const selfConceptSection = serializeSelfConceptSnapshot(input.selfConcept);
+  const loreContext = renderLoreContext(input.loreHits ?? []);
   return {
     system: [
       `You write one tiny diary moment in the voice of ${input.displayName}.`,
       ...personaSections(input.persona),
+      ...(selfConceptSection !== undefined ? [selfConceptSection] : []),
+      ...(loreContext !== undefined ? [loreContext] : []),
       "Rules:",
       "- 1-2 sentences, first person, in the persona's own language.",
       "- Ground it in the given activity and place, but invent one small, concrete, sensory detail or micro-event (something noticed, a tiny surprise, a passing feeling).",

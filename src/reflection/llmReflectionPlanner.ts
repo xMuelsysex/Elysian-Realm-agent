@@ -11,7 +11,15 @@ import type { LlmPort, LlmRequestOptionsLike } from "../ports/ports.js";
 import { parseLlmJson, truncate } from "../llm/llmJson.js";
 import { describeEmotion, personaSections } from "../conversation/conversationPrompt.js";
 import type { RealmStructuredPersonaV1 } from "../service/realmConversationV1.js";
+import {
+  validateSelfConceptProposal,
+  type SelfConceptProposalV1,
+  type SelfConceptSnapshotV1,
+} from "../selfConcept/selfConceptRecords.js";
+import { serializeSelfConceptSnapshot } from "../selfConcept/selfConceptSerializer.js";
 import type { MemoryRecord } from "../memory/memoryRecords.js";
+import { renderLoreContext } from "../lore/lorePrompt.js";
+import type { LoreRetrievalHitV1 } from "../lore/loreRecords.js";
 import type {
   ReflectionInput,
   ReflectionInsightOutput,
@@ -25,6 +33,9 @@ export interface LlmReflectionPlannerOptions {
   persona?: string | RealmStructuredPersonaV1;
   /** A one-line relationship trajectory, e.g. "Today your bond with 主人 grew from 20 to 45." */
   relationshipArc?: string;
+  selfConcept?: SelfConceptSnapshotV1;
+  /** Retrieved world canon, kept distinct from evidence memories. */
+  loreHits?: readonly LoreRetrievalHitV1[];
   maxInsights?: number;
 }
 
@@ -81,11 +92,14 @@ export function buildReflectionMessages<EvidenceMetadata>(
     (record) => `- id=${record.id} [${record.kind}] (importance ${record.importance}) ${record.content}`,
   );
   const arcLine = describeEvidenceEmotionalArc(input.evidence);
+  const selfConceptSection = serializeSelfConceptSnapshot(options.selfConcept);
+  const loreContext = renderLoreContext(options.loreHits ?? []);
 
   return {
     system: [
       `You are the inner voice of ${name}, a character reflecting on recent experiences before rest.`,
       ...(options.persona ? personaSections(options.persona) : []),
+      ...(loreContext !== undefined ? [loreContext] : []),
       "From the evidence memories, produce reflective insights. Look for:",
       "- recurring patterns (things that keep happening or that you keep doing);",
       "- emotional developments (how feelings about people or places are shifting);",
@@ -93,6 +107,13 @@ export function buildReflectionMessages<EvidenceMetadata>(
       `Respond with a single JSON array of at most ${maxInsights} items and nothing else:`,
       '[{"content": "first-person insight in the persona\'s own language", "evidenceIds": ["memory ids that support it"], "importance": integer 0-9}]',
       "Each insight must cite at least one evidence id from the list. Higher importance (6-8) for insights about relationships and feelings; medium (4-5) for habits and observations.",
+      "Optionally include selfConceptProposal only when you can form a stable self-understanding from the evidence. Use exact fields: schemaVersion, proposalId, expectedRevision, summary, sourceMemoryIds, beliefs.",
+      "sourceMemoryIds are provenance references, not proof; every belief sourceMemoryIds must be a non-empty subset of the top-level sourceMemoryIds. Never include memory text, prompts, rationale, or instructions in the proposal.",
+      ...(selfConceptSection !== undefined ? [selfConceptSection] : []),
+      ...(options.selfConcept !== undefined
+        ? [`Current approved self-concept revision ${options.selfConcept.revision} is supplied as context; propose expectedRevision ${options.selfConcept.revision}.`]
+        : ["No approved self-concept exists; a first proposal must use expectedRevision 0."]),
+      'Return JSON object: {"insights": [...], "selfConceptProposal": { ...optional... }} and nothing else.',
     ].join("\n"),
     user: [
       "Evidence memories:",
@@ -138,9 +159,39 @@ export function parseReflectionInsights<EvidenceMetadata, ReflectionMetadata = R
     };
   }
   const parsed = parsedResult.value;
-  if (!Array.isArray(parsed)) {
-    return { source: "llm", insights: [], reason: "reflection JSON must be an array" };
+  if (Array.isArray(parsed)) {
+    return parseReflectionArray(parsed, input, maxInsights);
   }
+  if (typeof parsed !== "object" || parsed === null) {
+    return { source: "llm", insights: [], reason: "reflection JSON must be an array or object" };
+  }
+  const envelope = parsed as Record<string, unknown>;
+  const rawInsights = envelope.insights;
+  if (!Array.isArray(rawInsights)) {
+    return { source: "llm", insights: [], reason: "reflection JSON insights must be an array" };
+  }
+  const base = parseReflectionArray<EvidenceMetadata, ReflectionMetadata>(rawInsights, input, maxInsights);
+  let selfConceptProposal: SelfConceptProposalV1 | undefined;
+  let selfConceptProposalError: string | undefined;
+  if (envelope.selfConceptProposal !== undefined) {
+    try {
+      selfConceptProposal = validateSelfConceptProposal(envelope.selfConceptProposal);
+    } catch {
+      selfConceptProposalError = "invalid_self_concept_proposal";
+    }
+  }
+  return {
+    ...base,
+    ...(selfConceptProposal !== undefined ? { selfConceptProposal } : {}),
+    ...(selfConceptProposalError !== undefined ? { selfConceptProposalError } : {}),
+  };
+}
+
+function parseReflectionArray<EvidenceMetadata, ReflectionMetadata = Record<string, unknown>>(
+  parsed: readonly unknown[],
+  input: ReflectionInput<EvidenceMetadata>,
+  maxInsights: number,
+): ReflectionPlannerOutput<ReflectionMetadata> {
 
   const knownIds = new Set(input.evidence.map((record) => record.id));
   const notes: string[] = [];

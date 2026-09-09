@@ -98,6 +98,9 @@ function buildReflectionResult<
       status: "failed",
       memoryWrites: [],
       diagnostics: validation.diagnostics,
+      ...(validation.selfConceptProposalError !== undefined
+        ? { selfConceptProposalError: validation.selfConceptProposalError }
+        : {}),
     };
   }
 
@@ -120,6 +123,12 @@ function buildReflectionResult<
     diagnostics: [
       completedReflectionDiagnostic(memoryWrites.length, evidenceMemoryIds, validation.output.source),
     ],
+    ...(validation.output.selfConceptProposal !== undefined
+      ? { selfConceptProposal: validation.output.selfConceptProposal }
+      : {}),
+    ...(validation.output.selfConceptProposalError !== undefined
+      ? { selfConceptProposalError: validation.output.selfConceptProposalError }
+      : {}),
   };
 }
 

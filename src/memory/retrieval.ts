@@ -11,6 +11,7 @@ import {
   type NormalizedMemoryRetrievalQuery,
 } from "./memoryRecords.js";
 import { validateMemoryRetrievalQuery } from "./validation.js";
+import { tokenizeText } from "../text/tokenize.js";
 
 interface ScoredRecord<Metadata> {
   record: MemoryRecord<Metadata>;
@@ -143,9 +144,12 @@ function compareScoredRecords<Metadata>(left: ScoredRecord<Metadata>, right: Sco
 
 function scoreRelevance<Metadata>(record: MemoryRecord<Metadata>, query: NormalizedMemoryRetrievalQuery): number {
   const channelScores: number[] = [];
-  const queryTokens = tokenize(query.text);
+  const queryTokens = tokenizeText(query.text);
   if (queryTokens.size > 0) {
-    const recordTokens = new Set([...tokenize(record.content), ...record.tags.flatMap((tag) => [...tokenize(tag)])]);
+    const recordTokens = new Set([
+      ...tokenizeText(record.content),
+      ...record.tags.flatMap((tag) => [...tokenizeText(tag)]),
+    ]);
     channelScores.push(scoreSetOverlap(queryTokens, recordTokens));
   }
 
@@ -186,26 +190,6 @@ function scoreSetOverlap(queryValues: ReadonlySet<string>, recordValues: Readonl
     }
   }
   return matches / queryValues.size;
-}
-
-const CJK_RUN = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff]+/g;
-
-function tokenize(value: string): Set<string> {
-  const lowered = value.toLocaleLowerCase();
-  const tokens: string[] = [...(lowered.match(/[a-z0-9_]+/g) ?? [])];
-  // CJK runs become overlapping bigrams (the Lucene CJKAnalyzer approach):
-  // "花园里" -> 花园, 园里. Without this, Chinese query text tokenizes to
-  // nothing and the relevance channel silently scores 0 for Chinese content.
-  for (const run of lowered.match(CJK_RUN) ?? []) {
-    if (run.length === 1) {
-      tokens.push(run);
-      continue;
-    }
-    for (let index = 0; index < run.length - 1; index += 1) {
-      tokens.push(run.slice(index, index + 2));
-    }
-  }
-  return new Set(tokens.map(normalizeToken).filter((token) => token.length > 0));
 }
 
 function normalizeToken(value: string): string {
