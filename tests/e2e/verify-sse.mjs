@@ -32,15 +32,19 @@ let exitCode = 0;
 
 try {
   let ready = false;
+  const listeningLine = `elysian-realm host listening on http://127.0.0.1:${port}`;
   for (let i = 0; i < 60 && !ready; i++) {
-    try { ready = (await fetch(`http://127.0.0.1:${port}/healthz`)).status === 200; } catch { /* not up yet */ }
+    if (proc.exitCode !== null) break;
+    let healthy = false;
+    try { healthy = (await fetch(`http://127.0.0.1:${port}/healthz`)).status === 200; } catch { /* not up yet */ }
+    ready = healthy && log.includes(listeningLine);
     if (!ready) await sleep(250);
   }
   if (!ready) {
-    results.push("FAIL host did not become ready");
-    exitCode = 1;
-    process.exit(exitCode);
+    throw new Error(`test host did not become ready${proc.exitCode === null ? "" : ` (exit ${proc.exitCode})`}`);
   }
+  // The health probe alone can hit an unrelated process already bound to the
+  // port. The child-owned listening line proves this run won the bind.
   results.push("PASS host ready");
 
   // ── SSE streaming chat ────────────────────────────────────────────────
@@ -107,14 +111,33 @@ try {
   } else if (applied === null) {
     results.push("FAIL no applied event received");
     exitCode = 1;
-  } else if (applied.affinity !== 3 || applied.mood?.mood !== "开心" || applied.analysis !== "llm") {
-    results.push(`FAIL applied event malformed: ${JSON.stringify(applied).slice(0, 120)}`);
-    exitCode = 1;
   } else {
-    results.push(`PASS streamed ${deltas.length} delta frame(s), ${reply.length} chars, first delta at ${firstDeltaMs}ms, total ${totalMs}ms`);
-    results.push(`PASS reply="${reply.slice(0, 60)}${reply.length > 60 ? "…" : ""}"`);
-    results.push(`PASS done fires with the reply alone: ${done.reply === reply && done.affinity === undefined}`);
-    results.push(`PASS applied carries the final state: affinity=${applied.affinity} mood=${applied.mood.mood} analysis=${applied.analysis}`);
+    const appliedShapeOk =
+      applied.agentId === "agent_elysia" &&
+      typeof applied.reply === "string" &&
+      applied.reply.length > 0 &&
+      typeof applied.affinity === "number" &&
+      Number.isFinite(applied.affinity) &&
+      applied.affinity >= 0 &&
+      applied.affinity <= 100 &&
+      typeof applied.mood?.mood === "string" &&
+      applied.mood.mood.length > 0 &&
+      typeof applied.mood.intensity === "number" &&
+      Number.isFinite(applied.mood.intensity) &&
+      applied.mood.intensity >= 0 &&
+      applied.mood.intensity <= 1 &&
+      applied.analysis === "llm";
+    const usingStub = credPath.endsWith("/stub-credentials.json");
+    const stubStateOk = !usingStub || (applied.affinity === 3 && applied.mood.mood === "开心");
+    if (!appliedShapeOk || !stubStateOk) {
+      results.push(`FAIL applied event malformed: ${JSON.stringify(applied).slice(0, 120)}`);
+      exitCode = 1;
+    } else {
+      results.push(`PASS streamed ${deltas.length} delta frame(s), ${reply.length} chars, first delta at ${firstDeltaMs}ms, total ${totalMs}ms`);
+      results.push(`PASS reply="${reply.slice(0, 60)}${reply.length > 60 ? "…" : ""}"`);
+      results.push(`PASS done fires with the reply alone: ${done.reply === reply && done.affinity === undefined}`);
+      results.push(`PASS applied carries the final state: affinity=${applied.affinity} mood=${applied.mood.mood} analysis=${applied.analysis}`);
+    }
   }
 
   // ── persistence ───────────────────────────────────────────────────────
@@ -293,8 +316,12 @@ try {
   results.push(`FAIL exception: ${error instanceof Error ? error.message : String(error)}`);
   exitCode = 1;
 } finally {
-  proc.kill("SIGTERM");
-  await new Promise((resolve) => proc.on("exit", resolve));
+  if (proc.exitCode === null && proc.signalCode === null) {
+    await new Promise((resolve) => {
+      proc.once("exit", resolve);
+      proc.kill("SIGTERM");
+    });
+  }
 }
 
 console.log(results.join("\n"));

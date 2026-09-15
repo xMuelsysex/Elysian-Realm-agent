@@ -8,11 +8,46 @@
 import type { AffectState, AgentMood, RelationshipAffect } from "../affect/affectRecords.js";
 import type { EmotionSignature, MemoryWrite } from "../memory/memoryRecords.js";
 import type { RealmMemoryMetadataV1, RealmMemoryRecordV1 } from "./realmStepV1.js";
+import type { SelfConceptSnapshotV1 } from "../selfConcept/selfConceptRecords.js";
+import type { LoreEntryV1 } from "../lore/loreRecords.js";
+import type { LoreDialogueRetrievalHitV1 } from "../lore/loreDialogueRecords.js";
 
 export const REALM_CONVERSATION_SCHEMA_VERSION = "realm-conversation.v1" as const;
 
 /** Default retrieval depth for conversation memory injection. */
 export const DEFAULT_CONVERSATION_MEMORY_TOP_K = 5;
+
+export const PERSONALITY_DIMENSION_KEYS = [
+  "sociability",
+  "empathy",
+  "rationality",
+  "courage",
+  "curiosity",
+  "independence",
+] as const;
+
+export type PersonalityDimensionKey = (typeof PERSONALITY_DIMENSION_KEYS)[number];
+
+export const DEFAULT_PERSONALITY_DIMENSION_VALUE = 50;
+
+export interface RealmPersonalityDimensionsV1 {
+  sociability?: number;
+  empathy?: number;
+  rationality?: number;
+  courage?: number;
+  curiosity?: number;
+  independence?: number;
+}
+
+export type RealmPersonalityDimensionBiasV1 = Partial<Record<PersonalityDimensionKey, number>>;
+
+export function resolvePersonalityDimensions(
+  input?: RealmPersonalityDimensionsV1,
+): Record<PersonalityDimensionKey, number> {
+  return Object.fromEntries(
+    PERSONALITY_DIMENSION_KEYS.map((key) => [key, input?.[key] ?? DEFAULT_PERSONALITY_DIMENSION_VALUE]),
+  ) as Record<PersonalityDimensionKey, number>;
+}
 
 /**
  * Structured character contract, borrowed from the field-organization of
@@ -34,6 +69,8 @@ export interface RealmStructuredPersonaV1 {
   behaviorTraits: readonly string[];
   /** A few in-voice sample lines anchoring the style (few-shot). */
   exampleLines: readonly string[];
+  /** Stable personality dimensions; absent values resolve to the neutral 50. */
+  personalityDimensions?: RealmPersonalityDimensionsV1;
   /**
    * Temperament baseline (ACT fundamental sentiments): where the affect
    * state decays back to. Absent means the engine default (0.2 / 0.3).
@@ -85,6 +122,7 @@ export interface RealmConversationMessageV1 {
 
 export interface RealmConversationOptionsV1 {
   memoryTopK?: number;
+  loreTopK?: number;
 }
 
 export interface RealmConversationRequestV1 {
@@ -106,6 +144,12 @@ export interface RealmConversationRequestV1 {
   mood?: AgentMood;
   /** The agent's current plot-driven emotional state, if established. */
   affect?: AffectState;
+  /** Host-approved derived self-concept; absent until nightly reflection accepts one. */
+  selfConcept?: SelfConceptSnapshotV1;
+  /** Curated world canon supplied by the host; never written to personal memory. */
+  lore?: readonly LoreEntryV1[];
+  /** Unlocked, character-visible transcript excerpts supplied by the host. */
+  storyContext?: readonly LoreDialogueRetrievalHitV1[];
   /** Prior turns of this conversation, oldest first. */
   history: readonly RealmConversationTurnV1[];
   /** The new incoming participant message to answer. */

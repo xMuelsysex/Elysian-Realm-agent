@@ -9,10 +9,13 @@ import {
   REALM_CONVERSATION_SCHEMA_VERSION,
   type RealmConversationRequestV1,
 } from "../src/service/realmConversationV1.js";
-import { createHostApiHandler } from "../src/host/hostApi.js";
+import { createHostAdminApiHandler, createHostApiHandler } from "../src/host/hostApi.js";
+import { createHostTestApiHandler } from "../src/host/testApi.js";
 import { CHAT_PAGE_HTML } from "../src/host/chatPage.js";
+import { TEST_PAGE_HTML } from "../src/host/testPage.js";
 import { ADMIN_PAGE_HTML } from "../src/service/adminPage.js";
 import { RealmHost, periodOf } from "../src/host/realmHost.js";
+import { RealmProfileManager } from "../src/host/realmProfiles.js";
 import { RealmStateStore, RealmStateError } from "../src/host/realmState.js";
 
 const AGENT_ID = "agent_elysia";
@@ -69,7 +72,7 @@ test("served page scripts are syntactically valid", () => {
   // \n inside a template becoming a real newline, or \b in a regex becoming
   // a backspace control char); compile both pages' scripts and reject control
   // chars that would break embedded regexes at runtime.
-  for (const html of [CHAT_PAGE_HTML, ADMIN_PAGE_HTML]) {
+  for (const html of [CHAT_PAGE_HTML, ADMIN_PAGE_HTML, TEST_PAGE_HTML]) {
     const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
     assert.ok(script, "page must embed a script block");
     assert.doesNotThrow(() => {
@@ -89,6 +92,25 @@ test("served page scripts are syntactically valid", () => {
   // OOC red-line leaks must surface visibly on both chat paths (SSE + JSON).
   assert.ok(CHAT_PAGE_HTML.includes('includes("ooc-leak")'), "chat page must render OOC leak annotations");
   assert.equal(CHAT_PAGE_HTML.split('includes("ooc-leak")').length - 1, 2, "both SSE and JSON paths carry the OOC leak check");
+  assert.ok(ADMIN_PAGE_HTML.includes('href="/chat"'), "admin page must provide a chat return link");
+  assert.ok(ADMIN_PAGE_HTML.includes('href="/test"'), "admin page must provide a story test link");
+  assert.ok(CHAT_PAGE_HTML.includes("当前剧情"), "chat page must show the current story state");
+  assert.ok(CHAT_PAGE_HTML.includes('href="/test"'), "chat page must provide a story test link");
+  assert.ok(CHAT_PAGE_HTML.includes('id="newChat"'), "chat page must offer a new-conversation button");
+  assert.ok(
+    CHAT_PAGE_HTML.includes('"/v1/host/new-conversation"'),
+    "the new-conversation button must call the host route",
+  );
+  assert.ok(
+    CHAT_PAGE_HTML.includes("data:image/webp;base64,"),
+    "chat page must embed the persona avatars inline",
+  );
+  assert.ok(
+    !CHAT_PAGE_HTML.includes("window.confirm"),
+    "the new-conversation confirmation must be an in-page card: the native dialog draws its buttons with no surface of their own",
+  );
+  assert.ok(TEST_PAGE_HTML.includes("/v1/test/inspect"), "test page must call the inspection API");
+  assert.ok(TEST_PAGE_HTML.includes("storyPrompt"), "test page must render the model story context");
 });
 
 test("first run seeds the default realm with a hand-editable config", () => {
@@ -147,6 +169,132 @@ test("chat flows state into the runner and applies the returned proposals", asyn
   assert.equal(restored.mood(AGENT_ID)?.mood, "开心");
   assert.equal(restored.historyFor(AGENT_ID).length, 4);
   assert.equal(restored.memoriesFor(AGENT_ID).length, 2);
+});
+
+test("staged dialogue lore hides unscoped future summaries at cursor zero", async () => {
+  const { runner, requests } = fakeRunner();
+  const host = new RealmHost(new RealmStateStore(tempDataDir()), () => runner, {
+    now: () => new Date("2026-07-26T12:00:00.000Z"),
+  });
+
+  await host.chat(AGENT_ID, "乐土终局");
+
+  assert.deepEqual(requests[0]?.lore, [], "legacy summaries must not bypass the story cursor");
+  assert.deepEqual(requests[0]?.storyContext, [], "no dialogue scene is unlocked at cursor zero");
+});
+
+test("story test api exposes the active model and exact visible lines without persistence", async () => {
+  const dialogue = {
+    schemaVersion: "lore-dialogue.v1",
+    source: "test-source",
+    arcs: [{ id: "arc-1", title: "测试篇", chapterIds: ["chapter-1"] }],
+    chapters: [{ id: "chapter-1", arcId: "arc-1", title: "测试章节", sceneIds: ["scene-1"] }],
+    scenes: [{
+      id: "scene-1",
+      arcId: "arc-1",
+      chapterId: "chapter-1",
+      order: 0,
+      title: "初遇",
+      sourceUrl: "https://example.test/scene-1",
+      available: true,
+      stages: [{
+        id: "stage-1",
+        lines: [
+          { id: "line-1", stageId: "stage-1", sourceIndex: 1, kind: "narration", text: "未进入角色视角的旁白" },
+          { id: "line-2", stageId: "stage-1", sourceIndex: 2, kind: "dialogue", speaker: "爱莉希雅", text: "欢迎来到测试篇。" },
+          { id: "line-3", stageId: "stage-1", sourceIndex: 3, kind: "option", text: "继续前进" },
+        ],
+      }],
+    }],
+  } as const;
+  const state = new RealmStateStore(tempDataDir());
+  const { runner } = fakeRunner("测试回复");
+  const host = new RealmHost(state, () => runner, {
+    loreDialogue: dialogue,
+    now: () => new Date("2026-07-26T12:00:00.000Z"),
+  });
+  host.setStoryCursor(undefined, 1);
+  const handler = createHostTestApiHandler(host, () => ({
+    configured: true,
+    provider: "custom",
+    baseUrl: "https://relay.example/v1",
+    model: "story-test-model",
+    configSource: "admin",
+    keySource: "stored",
+  }));
+
+  const status = await handler("GET", "/v1/test/status", undefined);
+  assert.equal(status?.status, 200);
+  assert.ok(status !== undefined && "body" in status);
+  const statusBody = status.body as { model: { model?: string; apiKey?: string } };
+  assert.equal(statusBody.model.model, "story-test-model");
+  assert.equal(statusBody.model.apiKey, undefined, "model status must not expose an API key");
+
+  const beforeHistory = state.historyFor(AGENT_ID).length;
+  const preview = await handler("POST", "/v1/test/inspect", {
+    profileId: "user_master",
+    agentId: AGENT_ID,
+    content: "欢迎来到测试篇。",
+  });
+  assert.equal(preview?.status, 200);
+  assert.ok(preview !== undefined && "body" in preview);
+  const previewBody = preview.body as {
+    inspection: {
+      storyCursor: number;
+      storyContext: readonly [{
+        scene: { chapterTitle: string; title: string };
+        lines: readonly [{ speaker?: string; text: string }, ...{ speaker?: string; text: string }[]];
+      }];
+      storyPrompt: string;
+    };
+  };
+  assert.equal(previewBody.inspection.storyCursor, 1);
+  assert.equal(previewBody.inspection.storyContext[0].scene.chapterTitle, "测试章节");
+  assert.equal(previewBody.inspection.storyContext[0].lines[0].speaker, "爱莉希雅");
+  assert.equal(previewBody.inspection.storyContext[0].lines[0].text, "欢迎来到测试篇。");
+  assert.match(previewBody.inspection.storyPrompt, /欢迎来到测试篇/);
+  assert.equal(state.historyFor(AGENT_ID).length, beforeHistory, "preview must not persist chat state");
+
+  const chat = await handler("POST", "/v1/test/chat", {
+    profileId: "user_master",
+    agentId: AGENT_ID,
+    content: "欢迎来到测试篇。",
+  });
+  assert.equal(chat?.status, 200);
+  assert.equal(state.historyFor(AGENT_ID).length, beforeHistory + 2, "test chat persists the exchange");
+});
+
+test("chat results are discarded when a profile rolls back while the runner is pending", async () => {
+  const state = new RealmStateStore(tempDataDir());
+  const base = fakeRunner();
+  let signalStarted!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    signalStarted = resolve;
+  });
+  const delayedRunner: ConversationRunner = {
+    run(request) {
+      signalStarted();
+      return new Promise((resolve) => {
+        release = () => {
+          void base.runner.run(request).then(resolve);
+        };
+      });
+    },
+  };
+  const host = new RealmHost(state, () => delayedRunner, {
+    now: () => new Date("2026-07-26T12:00:00.000Z"),
+  });
+  host.setStoryCursor(undefined, 1);
+
+  const pending = host.chat(AGENT_ID, "不会写入回退后的档案");
+  await started;
+  host.setStoryCursor(undefined, 0);
+  release();
+
+  await assert.rejects(pending, /story changed while an asynchronous action was running/);
+  assert.equal(state.historyFor(AGENT_ID).length, 0);
+  assert.equal(state.memoriesFor(AGENT_ID).length, 0);
 });
 
 test("chatStream falls back to one delta when the runner has no runStream", async () => {
@@ -400,6 +548,49 @@ test("host api serves state, history, and chat with explicit errors", async () =
   assert.equal(await handler("GET", "/v1/host/unknown", undefined), undefined);
 });
 
+test("starting a new conversation clears the transcript but keeps memories, affect and story", async () => {
+  const dir = tempDataDir();
+  const state = new RealmStateStore(dir);
+  const { runner } = fakeRunner();
+  const host = new RealmHost(state, () => runner, {
+    now: () => new Date("2026-07-26T12:00:00.000Z"),
+  });
+  const handler = createHostApiHandler(host);
+
+  await handler("POST", "/v1/host/chat", { agentId: AGENT_ID, content: "你好！" });
+  assert.equal(host.history(AGENT_ID).length, 2, "one exchange leaves a user and an agent turn");
+
+  const reset = await handler("POST", "/v1/host/new-conversation", { agentId: AGENT_ID });
+  assert.equal(reset?.status, 200);
+  assert.equal(
+    reset !== undefined && "body" in reset
+      ? (reset.body as { cleared: number }).cleared
+      : undefined,
+    2,
+  );
+  assert.equal(host.history(AGENT_ID).length, 0, "the transcript is dropped");
+  const after = host.listAgents()[0];
+  assert.equal(after?.memoryCount, 1, "memories survive a new conversation");
+  assert.equal(after?.affinity, 3, "affinity survives a new conversation");
+
+  const reopened = new RealmStateStore(dir);
+  assert.equal(reopened.historyFor(AGENT_ID).length, 0, "the cleared transcript must not come back on reopen");
+  assert.equal(reopened.memoriesFor(AGENT_ID).length, 1);
+
+  const badAgent = await handler("POST", "/v1/host/new-conversation", { agentId: "nope" });
+  assert.equal(badAgent?.status, 400);
+  assert.equal(
+    (await handler("POST", "/v1/host/new-conversation", undefined))?.status,
+    400,
+    "a missing body is a client error",
+  );
+  assert.equal(
+    (await handler("POST", "/v1/host/new-conversation", { agentId: "  " }))?.status,
+    400,
+    "an empty agentId is a client error",
+  );
+});
+
 test("host api streams chat deltas and a done event on stream requests", async () => {
   const state = new RealmStateStore(tempDataDir());
   const { runner } = fakeRunner("流式回复♪");
@@ -429,6 +620,71 @@ test("host api streams chat deltas and a done event on stream requests", async (
   const applied = events[2]?.[1] as { reply: string; affinity: number };
   assert.equal(applied.reply, "流式回复♪");
   assert.equal(applied.affinity, 3, "applied carries the post-analysis state");
+});
+
+test("profiles isolate chat state and story rollback restores the profile snapshot", async () => {
+  const root = new RealmStateStore(tempDataDir());
+  const profiles = new RealmProfileManager(root);
+  const host = new RealmHost(profiles, () => fakeRunner().runner, {
+    now: () => new Date("2026-07-26T12:00:00.000Z"),
+  });
+  host.createProfile({ profileId: "user_alt", displayName: "另一位主人" });
+
+  host.plotEvent(AGENT_ID, { type: "praise", target: "host" });
+  assert.equal(host.stats().totals.memories, 1);
+
+  host.setStoryCursor("user_alt", 2);
+  host.plotEvent(AGENT_ID, { type: "praise", target: "host" }, "user_alt");
+  assert.equal(host.stats("user_alt").totals.memories, 1);
+  host.plotEvent(AGENT_ID, { type: "criticism", target: "host" }, "user_alt");
+  assert.equal(host.stats("user_alt").totals.memories, 2);
+  host.setStoryCursor("user_alt", 0);
+
+  assert.equal(host.storyProgress("user_alt").cursor, 0);
+  assert.equal(host.stats("user_alt").totals.memories, 0, "rollback removes post-node memories");
+  assert.equal(host.user("user_alt").displayName, "另一位主人");
+  assert.equal(host.stats("user_alt").totals.relationships, 0, "rollback removes post-node relationships");
+  assert.equal(host.storyProgress().cursor, 0, "profiles keep independent story cursors");
+  assert.equal(host.stats().totals.memories, 1, "default profile state is untouched");
+});
+
+test("host and admin APIs select profile-scoped state and expose the story catalog", async () => {
+  const root = new RealmStateStore(tempDataDir());
+  const profiles = new RealmProfileManager(root);
+  const { runner, requests } = fakeRunner();
+  const host = new RealmHost(profiles, () => runner, {
+    now: () => new Date("2026-07-26T12:00:00.000Z"),
+  });
+  const hostHandler = createHostApiHandler(host);
+  const adminHandler = createHostAdminApiHandler(host);
+
+  const created = await adminHandler("POST", "/v1/admin/profiles", {
+    profileId: "user_alt",
+    displayName: "另一位主人",
+  });
+  assert.equal(created?.status, 201);
+
+  const profilesResult = await hostHandler("GET", "/v1/host/profiles", undefined);
+  assert.equal(profilesResult?.status, 200);
+  assert.equal((profilesResult as { body: { profiles: unknown[] } }).body.profiles.length, 2);
+
+  const chatResult = await hostHandler("POST", "/v1/host/chat", {
+    profileId: "user_alt",
+    agentId: AGENT_ID,
+    content: "只写入备用档案",
+  });
+  assert.equal(chatResult?.status, 200);
+  assert.equal(requests.at(-1)?.participant.participantId, "user_alt");
+  const history = await hostHandler("GET", `/v1/host/history/user_alt/${AGENT_ID}`, undefined);
+  assert.equal(history?.status, 200);
+  assert.equal((history as { body: { turns: unknown[] } }).body.turns.length, 2);
+
+  const realm = await adminHandler("GET", "/v1/admin/realm/user_alt", undefined);
+  assert.equal(realm?.status, 200);
+  const realmBody = (realm as { body: { story: { totalScenes: number; scenes: unknown[] }; agents: unknown[] } }).body;
+  assert.equal(realmBody.story.totalScenes, 608);
+  assert.equal(realmBody.story.scenes.length, 608);
+  assert.equal(realmBody.agents.length, 2);
 });
 
 test("host api surfaces mid-stream chat failures as error events", async () => {

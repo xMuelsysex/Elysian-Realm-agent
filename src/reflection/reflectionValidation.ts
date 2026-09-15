@@ -12,16 +12,20 @@ import {
   type ReflectionOutputSource,
   type ReflectionTriggerKind,
 } from "./reflectionRecords.js";
+import { validateSelfConceptProposal, type SelfConceptProposalV1 } from "../selfConcept/selfConceptRecords.js";
 
 interface PlannerOutputValidationResult<ReflectionMetadata> {
   diagnostics: readonly ReflectionDiagnostic[];
   output?: NormalizedReflectionPlannerOutput<ReflectionMetadata>;
+  selfConceptProposalError?: string;
 }
 
 interface PlannerOutputCandidate {
   source?: unknown;
   insights?: unknown;
   reason?: unknown;
+  selfConceptProposal?: unknown;
+  selfConceptProposalError?: unknown;
 }
 
 interface ReflectionInsightCandidate<ReflectionMetadata> {
@@ -81,6 +85,18 @@ export function validateReflectionPlannerOutput<
   const source = validateOutputSource(plannerOutput.source, diagnostics);
   pushNonEmptyStringDiagnostic(plannerOutput.reason, "output", "plannerOutput.reason", diagnostics, source);
   const reason = typeof plannerOutput.reason === "string" ? plannerOutput.reason : "";
+  let selfConceptProposal: SelfConceptProposalV1 | undefined;
+  let selfConceptProposalError: string | undefined =
+    plannerOutput.selfConceptProposalError === "invalid_self_concept_proposal"
+      ? "invalid_self_concept_proposal"
+      : undefined;
+  if (plannerOutput.selfConceptProposal !== undefined) {
+    try {
+      selfConceptProposal = validateSelfConceptProposal(plannerOutput.selfConceptProposal);
+    } catch {
+      selfConceptProposalError = "invalid_self_concept_proposal";
+    }
+  }
 
   const plannerInsights = Array.isArray(plannerOutput.insights) ? plannerOutput.insights : [];
 
@@ -109,7 +125,10 @@ export function validateReflectionPlannerOutput<
   }
 
   if (diagnostics.length > 0) {
-    return { diagnostics };
+    return {
+      diagnostics,
+      ...(selfConceptProposalError !== undefined ? { selfConceptProposalError } : {}),
+    };
   }
 
   return {
@@ -118,6 +137,8 @@ export function validateReflectionPlannerOutput<
       source,
       reason,
       insights: normalizedInsights,
+      ...(selfConceptProposal !== undefined ? { selfConceptProposal } : {}),
+      ...(selfConceptProposalError !== undefined ? { selfConceptProposalError } : {}),
     },
   };
 }

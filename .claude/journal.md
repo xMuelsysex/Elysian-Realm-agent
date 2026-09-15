@@ -1,5 +1,122 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-09-15 Chat 页可见表面 + 头像完整显示
+
+- 主人反馈：确认对话框 / admin 页里成对的按钮背景与底色融为一体；头像只显示了原图左上部分。
+- 控件表面规则（chat / admin / test 三页统一）：`select` / `input` / `textarea` / `button` / 页头链接一律 `background: color-mix(in srgb, currentColor 8%, transparent)` + `1px solid ... 35%`，hover 18%——透明底会让控件与页面底色融为一体。
+- 新对话确认改为页面内卡片（`#confirm`：`Canvas`/`CanvasText` 系统色 + 遮罩 + 红色「清空并开始」+ Esc / 取消），不再用 `window.confirm`：原生对话框只画按钮文字、不画按钮表面，深色主题下按钮不可读；测试新增禁止 `window.confirm` 的断言。
+- 头像改为**完整**官方缩图（144×144 艺术图居中内缩到 176×176 透明方图，不再裁头肩），容器 2.75rem + `object-fit: contain` + 底色 + 内描边环，浅色 / 深色下都有可见圆形表面。
+- 主人追问「解锁到场景这边还是白底白字」——根因：三个页面只声明 `color-scheme: light dark` 而**不自绘页面底色**，宿主偏深色时文字颜色解为白色，页面却露宿主的白底，于是整页与 `<select>` 原生下拉弹层（`option` 文字跟 `select` 同色）都是白底白字。修复：三页统一 `html { color-scheme: only light; background: #fff; color: #1a1a1a; }`，使页面、控件、原生弹层的字色与底色永远匹配；浏览器实测 `prefers-color-scheme: dark` 下页面仍为白底深字，`#storyCursor` 与其 609 个 option 的计算色均为 `#1a1a1a`。
+- 验证：`npm run typecheck`、`npm test`（286/286）、`npm run verify`（单测 + 离线 SSE / 双角色 / nightly E2E 全 PASS）；浏览器浅色与深色两种 `prefers-color-scheme` 实测确认卡片、头像圆环与三页控件底色；取消 / Esc 不删历史，确认后清空且好感度保留；截图 `.playwright-mcp/chat-confirm-{light,dark}.png`、`chat-surfaces-light.png`、`admin-{light,dark}.png`、`test-light.png`。
+
+## 2026-09-15 Chat 页加宽 + 人物头像 + 开始新的对话
+
+- `/chat` 容器从 72rem 加宽到 88rem（左右内边距 1rem → .75rem），聊天区与剧情面板栅格比例不变。
+- 对话双方显示头像：爱莉希雅（粉色妖精小姐♪）与梅比乌斯（无限·噬界之蛇）的官方游戏缩略图裁成头肩方图，降为 160×160 WebP 以 data URI 内嵌在 `src/host/avatarAssets.ts`，键为稳定 `personaId`——无静态路由、无运行时文件读取、无新依赖；无图 persona 与用户侧回退「首字 + key 取色圆牌」。气泡外层改为 `.row` 承载头像与左右方向。
+- 新增 `POST /v1/host/new-conversation`（`RealmStateStore.clearConversation`）：清空该档案该角色的对话记录并落库，记忆 / 好感度 / 心情 / 自我认知 / 剧情游标全部保留；页面点击先确认再重载为空历史态。窄屏（≤760px）header 改换行排版，标题不再被挤成竖排。
+- 验证：`npm run typecheck`、`npm test`（286/286，含新对话保留记忆与好感度、重开库不复现、缺参 400）、`npm run verify`（单元 + 离线 SSE / 双角色 / nightly E2E 全 PASS）；浏览器 1600px 宽屏与 390px 窄屏实测头像、换行与新对话落库，截图存 `.playwright-mcp/chat-*.png`。
+
+## 2026-09-14 聊天右侧剧情概述面板
+
+- `/chat` 新增响应式右侧剧情面板：复用档案游标和 `dialogueLinesForSpeaker` 的角色可见投影，调用独立 Host API 生成当前概述、最多 3 个实际可见场景回顾和 3 个提问提示；结果只在请求响应中存在，不写入 Realm 状态、记忆或聊天历史。
+- LLM 输出必须是受约束 JSON，场景 ID、回顾数量、提问数量和文本长度在 Host 边界校验；游标为 0、当前场景无角色可见原文或 LLM 配置 / 输出失败时，页面保留明确空态 / 错误态。窄屏使用 `details` 折叠，提问只复制到剪贴板，不直接发送。
+- 离线 LLM stub 增加剧情向导 JSON 分支，保持本地 demo 可验证；chat 以 5 秒低频轮询检测跨页面剧情游标变化并自动重载侧栏；验证：`npm run typecheck`、`npm run build`、`npm run verify`（285 / 285 + 离线 SSE / 双角色 / nightly E2E）、`git diff --check` 和浏览器桌面 / 390px 窄屏 smoke 全部通过。
+
+## 2026-09-14 第三轮角色鲜活度复审修复
+
+- 修复 Lore 角色知识投影的私有思考泄漏：`dialogueLinesForSpeaker` 保留角色自身括号内心作为语气证据，但移除其他说话人的全括号私有思考；`loreDialoguePrompt` 明确该类内容不可推断，避免把离场后的芽衣心声当作爱莉希雅可知事实。
+- 扩展 OOC 身份检测和参与者投影的中文句式，覆盖“一款/一位/一台/一套”量词及“确实/当然/实际上/算是”等副词/判断词，同时保留程序员、机器人偶等正常语义负例。
+- 针对性 smoke：cursor 422 的“坏掉的打字机-分头行动”不再注入芽衣两条内心独白；`我是一款/确实/当然是人工智能助手` 均命中，直接 runner 对泄露回复跳过 affect 分析并只保留 importance=3、无 emotion 的参与者记忆。
+- 验证：变更后 `npm run verify`（285/285 + SSE / 双角色 / nightly E2E 全 PASS）、`bash .auto/measure.sh`（`character_fidelity=100`，`prompt_bytes=23454`）、`git diff --check` 和 `node --check tests/e2e/verify-sse.mjs` 均通过；真实中转 `ELYSIAN_CREDENTIALS_PATH="$HOME/.elysian-realm/credentials.json" bash scripts/run-e2e.sh` exit 0，真实模型流式 97 帧 / 125 字符，应用状态、持久化、反思、JSON fallback 与梅比乌斯链路全部 PASS。
+
+## 2026-09-14 OOC 角色可见投影复审修复
+
+- 根据独立复审补齐端到端角色可见边界：新增统一 `isCharacterVisibleMemory`，在对话召回、直接 runner 历史、生活叙事连续性、夜间反思证据和 self-concept provenance 处过滤旧 OOC / system plan / deterministic reflection；原始记录继续保留给 Host / Admin 诊断。
+- `detectOocLeak` 不再因引号自动豁免，补齐大型语言模型、扮演框架、内部字段和参与者 OOC 指令模式，并为“程序员 / 机器人偶 / 感情用事 / Follow my instructions / 第三方转述”保留正常语义；参与者 OOC 轮次不再回灌历史或证据。
+- affect analysis 的 mood 经过短文本与 OOC / 内部机制校验；unsafe mood 不写入、不回注，状态层拒绝直接写入；泄露回复在分析前跳过 affect，runner 只返回原始参与者记忆。self-concept prompt 只保留 revision、summary 和 belief statements，旧泄露 snapshot 不再序列化。
+- 验证：`npm run typecheck`、`npm run verify`（285/285 + 离线 E2E 全部 PASS）、`bash .auto/measure.sh`（`character_fidelity=100`，`prompt_bytes=23454`）、`git diff --check`、detector regression smoke、projection/state smoke 和 direct prompt projection smoke 均通过；真实中转 LLM 仍未在线验证，未创建提交。
+
+## 2026-09-14 角色上下文内核收敛
+
+- 对话模型召回现在排除 `visibility=system` 的计划记录和 `reflectionSource=deterministic` 的引擎反思记录，避免内部 bookkeeping 变成角色台词或自我认知；已有持久化数据无需破坏性清理。
+- 确定性 tick 的计划 / 反思文本改为第一人称并移除内部 agent id；宿主在构造聊天请求时过滤历史中的 OOC agent turn，保留存储数据供诊断和 admin 查看。
+- 验证：`npm run typecheck`、`npm test`（285/285）、`npm run verify`（离线 E2E 全部 PASS）、`bash .auto/measure.sh`（`character_fidelity=100`，`prompt_bytes=21311`）、`git diff --check` 和真实 `realm-data` 模型上下文 smoke 均通过。
+
+## 2026-09-14 角色鲜活度复审边界修复
+
+- 根据独立复审修复 5 项边界：`dialogueSpeakerAliases` 不再把「妖精爱莉」合并进爱莉希雅，并补齐梅比乌斯「无限的蛇主」别名；生活叙事传递稳定 `personaId`，自定义显示名仍能召回自身台词。
+- OOC guard 新增 `AI/语言模型/游戏角色/虚拟存在/网络/提示词/命名模型` 中英文模式，并跳过引用和否定语境；OOC 对话只重建 importance=3、无 emotion 的原始参与者记忆，禁止回复、affect、关系和心情落库。
+- transcript renderer 以阶段 block 保留 result/branch/route marker，并将前置条件随首条阶段台词注入，明确条件不是已发生事件。
+- 验证：`npm run typecheck`、`npm run build`、`npm test`、`npm run verify`（285/285 + E2E）、`bash .auto/measure.sh`（`character_fidelity=100`）和 `git diff --check` 均通过；真实中转 LLM 仍未在线验证。
+
+## 2026-09-14 角色鲜活度与原作一致性修复
+
+- 统一 `DEFAULT_REALM_CONFIG` 与当前 `realm-data/realm.json` 的爱莉希雅 / 梅比乌斯角色卡：修正往世乐土记忆体定位与梅比乌斯「无限」刻印，补充本地剧情快照可核对的身份、性格、价值、行为和台词锚点，移除现代网络聊天人设。
+- 对话、生活叙事、夜间反思强化资料只读边界、示例仅作语气锚点、基于证据的共同经历和角色主动性；剧情转录按稳定 personaId 补齐说话人别名，过滤不可用场景，标明自身台词/他人台词/旁白与分支元数据，并在最终渲染预算内保留有效片段。
+- OOC 检测补充现代网络、提示词和命名模型身份泄露；泄露回复保留 `analysisReason` 诊断但不写入 agent 历史、生成记忆或情绪关系闭环，日记/反思/self-concept 泄露进入 notes 并隔离出持久化流。
+- 验证：`npm run typecheck`、`npm run verify`（285/285 离线测试 + E2E 全部 PASS）、`bash .auto/measure.sh`（`character_fidelity=100`，`tests=285`）和 `git diff --check` 均通过；未创建提交，真实中转 LLM 未在线验证。
+
+## 2026-09-14 剧情测试台与模型上下文可视化
+
+- 新增独立 `/test` 测试台，展示实际 Model、Provider / Base URL、配置来源和凭据来源（不展示 API Key），支持按档案 / 角色预览或发送测试。
+- 新增只读 `/v1/test/inspect` 与 `/v1/test/status`、执行型 `/v1/test/chat`；预览返回角色入场边界内的实际命中剧情行、章节 / 场景 / 阶段、说话角色、文本类型、相关度、来源和完整 `storyPrompt`，发送测试才持久化聊天。
+- `/chat` 与 `/admin` 增加测试台入口，普通聊天不携带调试信息；测试 API 对模型状态做显式字段白名单。
+- 验证：`npm run typecheck`、`npm test`（285/285）、`npm run verify:e2e`、`git diff --check` 和独立浏览器 `/test` 预览 / 发送实测均通过；临时 Host 与 stub 已停止，未创建提交。
+
+## 2026-09-14 聊天设置返回与剧情可见性
+
+- `/admin` 设置页新增“← 返回聊天”入口；聊天页新增当前剧情卡片，显示档案当前章节、场景和解锁进度，游标为 `0` 时不显示已解锁剧情。
+- Lore 对话检索始终保留最新已解锁且角色已入场的场景，相关 Prompt 明确要求把它作为连续剧情使用；未解锁内容和角色入场边界保持不变。
+- 浏览器首次检查发现聊天页缺少剧情卡片的文本辅助函数，已修复并重建；复测 `/admin → /chat`、游标 `0` / `1` 页面通过，控制台仅有既有 `/favicon.ico` 404。
+- 验证：`npm test`（283/283）、`npm run typecheck`、`npm run verify:e2e`、`git diff --check` 和浏览器实际检查通过；未创建提交。
+
+## 2026-09-12 完整剧情原文与 profileId 档案
+
+- 完成 `往世乐土` 与 `致以无瑕之人` 的离线对话 Lore 快照：6 章、608 个场景节点（605 个可用、3 个源页面缺失）、1,144 个阶段、19,756 条原文行；保留来源、顺序、说话角色和文本类型，运行时不联网。
+- 新增 `RealmProfileManager` 与 profile-scoped `RealmStateStore`，隔离每个档案的剧情游标、记忆、关系、心情、自我认知和对话历史；后台支持建档 / 编辑 / 选档 / 手动调节场景，回退通过检查点恢复状态。
+- 对话、生活叙事、夜间反思按已解锁场景和角色入场点注入完整对话 Lore；旧摘要不再绕过游标，异步请求在回退或切档后不会写入错误档案。`/chat` 和 `/admin` 均支持档案操作。
+- 导入脚本支持分章节字段映射、嵌套 HTML 台词解析和缺失页面诊断；E2E 启动默认申请空闲端口，并要求子 Host 自报 listening，避免健康探针误用旧进程。
+- 验证：`npm run typecheck`、`npm test`（282/282）、`npm run verify`（282/282 + E2E 全部 PASS）、脚本 `node --check`、浏览器实际页面验收和 `git diff --check` 均通过。未创建提交。
+
+## 2026-09-12 聊天画面设置入口
+
+- 聊天页 header 新增“⚙ 设置”入口，跳转复用同端口 `/admin` 的既有 LLM 配置页；用户可配置自定义中转 Base URL、Model 和 API Key，并使用连接测试与保存热加载。
+- 未新增第二套表单、配置 API 或凭据存储；既有 key 不回显、候选缺 key 时保留存储 key 的安全语义保持不变。
+- 验证：类型检查、构建及受影响测试 34/34 通过；浏览器实测 `/chat → /admin` 和 Base URL/API Key 控件可用。唯一控制台错误为 `/favicon.ico` 404，与功能无关。
+
+## 2026-09-12 后台角色属性与记忆面板
+
+- `/admin` 新增只读角色面板：六维属性进度条、好感度、心情、情绪签名和最近 100 条记忆。
+- 新增认证后的 `GET /v1/admin/realm`，由 `RealmHost.adminView()` 生成快照；属性不进入聊天端 `/v1/host/state`，记忆内容使用 `textContent` 渲染。
+- 验证：`npm run typecheck`、构建和受影响测试 89/89 通过；浏览器实测两名角色面板和 admin 配置控件；`git diff --check` 通过。唯一控制台错误为 `/favicon.ico` 404，与功能无关。
+
+## 2026-09-12 六维角色属性第一期
+
+- 在现有 `RealmStructuredPersonaV1` 中加入可选 `personalityDimensions`：外向度、共情度、理性度、勇气、好奇度、独立度，范围 `0–100`，缺失按 `50`；保留旧字符串 persona 兼容。
+- `personaSections()` 统一向对话、生活叙事、夜间反思注入数值与 5 段语义；Host 用固定事件倍率调制 affect/affinity，并用 `personalityBias` 参与 routine 的确定性选择（mood → 人格得分 → 声明顺序）。属性静态、隐藏，不进入 SQLite 成长状态。
+- 默认内置配置和 `realm-data/realm.json` 为爱莉希雅、梅比乌斯加入六维值与 routine 偏好；同步更新 `character-contract.md`、`host-runtime.md`。
+- 遵循项目规则未新增测试文件；验证：`npm run typecheck`、`npm test`（275/275）、`npm run verify:e2e` 全部通过，额外 personality smoke 与 JSON 解析通过，`git diff --check` 通过。直接全局 `tsc` 的 TS5090/TS5102 环境错误改用项目本地 `npm exec -- tsc`，未修改无关配置。
+
+## 2026-09-05 Lore review findings 修复
+
+- 按独立审查确认的 RV-001～RV-005 完成一次性修复：对话 Lore 查询带最近两条 participant 历史；检索和渲染排序使用固定 code-unit 规则；生活叙事/夜间反思不再用角色名单独触发 Canon；Lore 输入、topK、数组、控制字符与 Prompt 预算有显式边界；Canon provenance 输出精确 sourceUrl/canonVersion。
+- 新增对应回归测试，覆盖指代追问、非 ASCII tie-break、Host 两条检索轨、恶意/超限输入和来源语义。
+- 验证：`npm run build`、`npm run typecheck`、TS5.9 兼容测试编译（`--ignoreDeprecations 5.0`）及完整离线单测 275 项全绿，`git diff --check` 通过。标准 `npm test` 仍受既有 TS5090/TS5102 测试配置问题阻断；未改无关配置，未执行真实 LLM E2E。
+
+## 2026-09-05 往世乐土正史知识层
+
+- 新分支 `feature/elysian-realm-lore` 新增独立、只读、版本化的 `src/lore/`：公开网页摘要形成初始 Canon，保留来源 URL；CJK/ASCII 本地词法检索按 `knownTo` 过滤，零相关条目不注入。
+- Canon 与 `MemoryRecord` 分离；对话、生活叙事、夜间反思统一注入 `Canonical story context (read-only; not personal memory)`，并保留故事条目因果顺序，避免把正史冒充个人经历。
+- Host 默认加载并校验往世乐土语料，也允许测试/宿主传入自定义语料；`realm-conversation.v1` 新增可选 lore 与 `loreTopK`，旧请求保持兼容。
+- 验证：`npm run build`、`npm run typecheck`、`git diff --check` 通过；完整离线单测 271 项通过（TS5.9 测试编译使用 `--ignoreDeprecations 5.0`）。标准 `npm test` 仍受现有 TS5090/TS5102 配置兼容错误阻断，未改无关配置。
+
+## 2026-08-23 自我认知成长首版
+
+- self-concept 独立于 realm.json persona 与普通经历记忆，由 RealmStateStore 持有版本化 snapshot；proposal 由 nightly reflection 产生，宿主通过证据归属校验与 CAS 决定是否应用。
+- SQLite 增加 self-concept snapshot 与 append-only proposal audit；完整审计保存结构化脱敏 payload，非法 proposal 记录 `parse_failure`，缺失证据记录 `evidence_invalid`，CAS 冲突记录 `revision_conflict` 并等待下一次 nightly。
+- 批准 snapshot 只读注入 conversation、life narrative、nightly reflection 三条 prompt 轨；非法 self-concept proposal 不阻断同一 reflection 中合法 memory writes。
+- 验证：`npm run typecheck` 通过；`npm run verify` 通过（263 项单测、14 项离线 E2E）。
+
 ## 2026-08-10 二十二轮补二十三：参与者情绪输入（autoresearch 战役二十九）
 
 - message 可选 emotion{valence,arousal}（校验 -1..1/0..1）；透传到 reply port，user 消息追加共情提示（down/in good spirits/composed）。双向情感感知：角色能感知对方情绪。+3 测试。243 tests 全绿。

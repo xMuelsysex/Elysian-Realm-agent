@@ -11,6 +11,7 @@ import { MOOD_INTENSITY_MAX, MOOD_INTENSITY_MIN } from "../affect/affectRecords.
 import type { LlmPort, LlmRequestOptionsLike } from "../ports/ports.js";
 import { parseLlmJson, truncate } from "../llm/llmJson.js";
 import { describeAffectState } from "./conversationPrompt.js";
+import { isCharacterVisibleMood } from "./oocGuard.js";
 import type {
   RealmConversationAffectV1,
   RealmConversationTurnV1,
@@ -37,9 +38,11 @@ export function buildAffectAnalysisMessages(input: AffectAnalysisInput): {
   const relationshipLine = input.relationship
     ? `current affinity ${input.relationship.affinity} on a -100..100 scale`
     : "no established relationship yet (affinity starts at 0)";
-  const moodLine = input.mood
+  const moodLine = input.mood !== undefined && isCharacterVisibleMood(input.mood.mood)
     ? `current mood "${input.mood.mood}" at intensity ${input.mood.intensity.toFixed(2)}`
-    : "no established mood";
+    : input.mood !== undefined
+      ? "stored mood is unavailable because its text was quarantined"
+      : "no established mood";
   const affectLine = input.affect ? `; emotional state ${describeAffectState(input.affect)}` : "";
 
   const transcript = input.turns
@@ -164,6 +167,11 @@ function readMood(
     notes.push("ignored empty or non-string mood");
     return undefined;
   }
+  const mood = rawMood.trim();
+  if (!isCharacterVisibleMood(mood)) {
+    notes.push("ignored unsafe or overlong mood");
+    return undefined;
+  }
 
   const rawIntensity = parsed.moodIntensity;
   if (typeof rawIntensity !== "number" || !Number.isFinite(rawIntensity)) {
@@ -175,7 +183,7 @@ function readMood(
     notes.push(`moodIntensity clamped from ${rawIntensity} to ${intensity}`);
   }
 
-  return { mood: rawMood, intensity };
+  return { mood, intensity };
 }
 
 function readMemoryImportance(parsed: Record<string, unknown>, notes: string[]): number | undefined {

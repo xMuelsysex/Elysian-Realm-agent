@@ -37,6 +37,7 @@
     "test": "npm run build && tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js",
     "start": "node dist/service/main.js",
     "host": "node dist/host/main.js",
+    "import:lore": "node scripts/import-bh3-dialog.mjs",
     "verify:e2e": "npm run build && bash scripts/run-e2e.sh",
     "verify": "npm test && npm run verify:e2e"
   },

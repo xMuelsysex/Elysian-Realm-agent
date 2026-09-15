@@ -18,10 +18,18 @@ import {
 } from "../service/realmConversationV1.js";
 import type { RealmMemoryMetadataV1 } from "../service/realmStepV1.js";
 import { buildConversationSystemPrompt } from "./conversationPrompt.js";
+import {
+  detectOocLeak,
+  isCharacterVisibleMemory,
+  isCharacterVisibleParticipantMessage,
+} from "./oocGuard.js";
 import { runAffectAnalysis } from "./affectAnalysis.js";
+import { retrieveLoreEntries } from "../lore/loreRetrieval.js";
+import { DEFAULT_LORE_RETRIEVAL_TOP_K } from "../lore/loreRecords.js";
 
 /** Base importance for routine conversation memories. */
 export const CONVERSATION_MEMORY_IMPORTANCE = 3;
+const LORE_HISTORY_QUERY_WINDOW = 2;
 
 export interface ConversationReplyInput {
   conversationId: string;
@@ -95,7 +103,16 @@ export function createConversationRunner(deps: ConversationRunnerDeps): Conversa
 }
 
 function buildReplyInput(request: RealmConversationRequestV1): ConversationReplyInput {
-  const memoryStore = new InMemoryMemoryStore<RealmMemoryMetadataV1>(request.memories);
+  // Engine planning/reflection records are internal bookkeeping, not lived
+  // experience. Hide them from the character-facing recall path so an
+  // implementation detail cannot become dialogue or self-knowledge.
+  const modelMemories = request.memories.filter(isCharacterVisibleMemory);
+  const visibleHistory = request.history.filter((turn) => (
+    turn.role === "agent"
+      ? detectOocLeak(turn.content) === undefined
+      : isCharacterVisibleParticipantMessage(turn.content)
+  ));
+  const memoryStore = new InMemoryMemoryStore<RealmMemoryMetadataV1>(modelMemories);
   const retrieval = memoryStore.retrieve(request.agent.agentId, {
     text: request.message.content,
     now: request.now,
@@ -110,7 +127,22 @@ function buildReplyInput(request: RealmConversationRequestV1): ConversationReply
       : {}),
   });
 
-  const lastTurnAt = [...request.history].reverse().find((turn) => turn.at !== undefined)?.at;
+  const loreQueryText = [
+    ...visibleHistory
+      .filter((turn) => turn.role === "participant")
+      .slice(-LORE_HISTORY_QUERY_WINDOW)
+      .map((turn) => turn.content),
+    request.message.content,
+  ].join("\n");
+  const loreHits = request.lore === undefined
+    ? []
+    : retrieveLoreEntries(request.lore, {
+        agentId: request.agent.agentId,
+        text: loreQueryText,
+        topK: request.options?.loreTopK ?? DEFAULT_LORE_RETRIEVAL_TOP_K,
+      }).hits;
+
+  const lastTurnAt = [...visibleHistory].reverse().find((turn) => turn.at !== undefined)?.at;
   const systemPrompt = buildConversationSystemPrompt({
     agent: request.agent,
     participant: request.participant,
@@ -118,7 +150,10 @@ function buildReplyInput(request: RealmConversationRequestV1): ConversationReply
     relationshipHistory: request.relationshipHistory,
     mood: request.mood,
     affect: request.affect,
+    selfConcept: request.selfConcept,
     memoryHits: retrieval.hits,
+    loreHits,
+    storyContext: request.storyContext,
     now: request.now,
     ...(lastTurnAt !== undefined ? { lastTurnAt } : {}),
   });
@@ -128,7 +163,7 @@ function buildReplyInput(request: RealmConversationRequestV1): ConversationReply
     agentId: request.agent.agentId,
     now: request.now,
     systemPrompt,
-    history: request.history,
+    history: visibleHistory,
     message: request.message.content,
     // The participant's felt state rides along so the reply input can render
     // it ("主人 seems down right now") — the seed of empathic responses.
@@ -141,25 +176,37 @@ async function finishConversation(
   deps: ConversationRunnerDeps,
   replyContent: string,
 ): Promise<RealmConversationResponseV1> {
+  const replyLeak = detectOocLeak(replyContent);
   const analyzedTurns: RealmConversationTurnV1[] = [
-    ...request.history.slice(-4),
-    { role: "participant", content: request.message.content },
+    ...request.history.slice(-4).filter((turn) => (
+      turn.role === "agent"
+        ? detectOocLeak(turn.content) === undefined
+        : isCharacterVisibleParticipantMessage(turn.content)
+    )),
+    ...(isCharacterVisibleParticipantMessage(request.message.content)
+      ? [{ role: "participant" as const, content: request.message.content }]
+      : []),
     { role: "agent", content: replyContent },
   ];
-  const affect = deps.analysisLlm
-    ? await runAffectAnalysis(
-        deps.analysisLlm,
-        {
-          agentDisplayName: request.agent.displayName,
-          participantDisplayName: request.participant.displayName,
-          relationship: request.relationship,
-          mood: request.mood,
-          affect: request.affect,
-          turns: analyzedTurns,
-        },
-        deps.analysisRequestOptions,
-      )
-    : { analysis: "skipped" as const, reason: "no affect analysis llm configured" };
+  const affect = replyLeak !== undefined
+    ? {
+        analysis: "skipped" as const,
+        reason: `affect analysis skipped after ooc-leak: ${replyLeak}`,
+      }
+    : deps.analysisLlm
+      ? await runAffectAnalysis(
+          deps.analysisLlm,
+          {
+            agentDisplayName: request.agent.displayName,
+            participantDisplayName: request.participant.displayName,
+            relationship: request.relationship,
+            mood: request.mood,
+            affect: request.affect,
+            turns: analyzedTurns,
+          },
+          deps.analysisRequestOptions,
+        )
+      : { analysis: "skipped" as const, reason: "no affect analysis llm configured" };
 
   return {
     schemaVersion: REALM_CONVERSATION_SCHEMA_VERSION,
@@ -167,12 +214,14 @@ async function finishConversation(
     agentId: request.agent.agentId,
     reply: { content: replyContent },
     affect,
-    memoryWrites: buildConversationMemoryWrites(
-      request,
-      replyContent,
-      affect.memoryImportance,
-      affect.emotion,
-    ),
+    memoryWrites: replyLeak === undefined
+      ? buildConversationMemoryWrites(
+          request,
+          replyContent,
+          affect.memoryImportance,
+          affect.emotion,
+        )
+      : [buildConversationMemoryWrites(request, "", CONVERSATION_MEMORY_IMPORTANCE)[0]],
   };
 }
 

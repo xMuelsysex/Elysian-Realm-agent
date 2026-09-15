@@ -15,6 +15,12 @@ import type {
   ConversationRunner,
 } from "../conversation/conversationRunner.js";
 import {
+  LORE_MAX_TOP_K,
+  LoreValidationError,
+  validateLoreEntries,
+  type LoreEntryV1,
+} from "../lore/loreRecords.js";
+import {
   REALM_CONVERSATION_SCHEMA_VERSION,
   type RealmConversationAgentV1,
   type RealmConversationMessageV1,
@@ -22,10 +28,13 @@ import {
   type RealmConversationParticipantV1,
   type RealmConversationRequestV1,
   type RealmConversationResponseV1,
+  PERSONALITY_DIMENSION_KEYS,
   type RealmConversationTurnV1,
+  type RealmPersonalityDimensionsV1,
   type RealmStructuredPersonaV1,
 } from "./realmConversationV1.js";
 import type { RealmMemoryRecordV1 } from "./realmStepV1.js";
+import { validateLoreDialogueRetrievalHits, type LoreDialogueRetrievalHitV1 } from "../lore/loreDialogueRecords.js";
 
 export class RealmConversationValidationError extends Error {
   constructor(message: string) {
@@ -70,6 +79,8 @@ export function validateRealmConversationRequestV1(input: unknown): RealmConvers
   const history = validateHistory(input.history);
   const message = validateMessage(input.message);
   const options = validateOptions(input.options);
+  const lore = validateLore(input.lore);
+  const storyContext = validateStoryContext(input.storyContext);
 
   return {
     schemaVersion: REALM_CONVERSATION_SCHEMA_VERSION,
@@ -82,6 +93,8 @@ export function validateRealmConversationRequestV1(input: unknown): RealmConvers
     ...(relationshipHistory ? { relationshipHistory } : {}),
     ...(mood ? { mood } : {}),
     ...(affect ? { affect } : {}),
+    ...(lore ? { lore } : {}),
+    ...(storyContext ? { storyContext } : {}),
     history,
     message,
     ...(options ? { options } : {}),
@@ -146,6 +159,7 @@ function validatePersona(input: unknown): string | RealmStructuredPersonaV1 {
     }
     return value;
   };
+  const personalityDimensions = validatePersonalityDimensions(input.personalityDimensions);
   let baseline: { valence: number; arousal: number } | undefined;
   const rawBaseline = input.baseline;
   if (rawBaseline !== undefined) {
@@ -170,10 +184,37 @@ function validatePersona(input: unknown): string | RealmStructuredPersonaV1 {
     boundaries: stringArray("boundaries"),
     behaviorTraits: stringArray("behaviorTraits"),
     exampleLines: stringArray("exampleLines"),
+    ...(personalityDimensions !== undefined ? { personalityDimensions } : {}),
     ...(baseline !== undefined ? { baseline } : {}),
     ...(affectModifiers !== undefined ? { affectModifiers } : {}),
     ...(emotionResponsiveness !== undefined ? { emotionResponsiveness } : {}),
   };
+}
+
+function validatePersonalityDimensions(
+  input: unknown,
+): RealmPersonalityDimensionsV1 | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (!isRecord(input)) {
+    throw new RealmConversationValidationError("agent.persona.personalityDimensions must be an object");
+  }
+  const out: RealmPersonalityDimensionsV1 = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (!PERSONALITY_DIMENSION_KEYS.includes(key as (typeof PERSONALITY_DIMENSION_KEYS)[number])) {
+      throw new RealmConversationValidationError(
+        `agent.persona.personalityDimensions.${key} is not a personality dimension`,
+      );
+    }
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 100) {
+      throw new RealmConversationValidationError(
+        `agent.persona.personalityDimensions.${key} must be a finite number from 0 to 100`,
+      );
+    }
+    out[key as (typeof PERSONALITY_DIMENSION_KEYS)[number]] = value;
+  }
+  return out;
 }
 
 function validateAffectModifiers(
@@ -360,13 +401,46 @@ function validateOptions(input: unknown): RealmConversationOptionsV1 | undefined
   if (!isRecord(input)) {
     throw new RealmConversationValidationError("options must be an object");
   }
-  if (input.memoryTopK === undefined) {
+  if (input.memoryTopK === undefined && input.loreTopK === undefined) {
     return {};
   }
-  if (!Number.isInteger(input.memoryTopK) || (input.memoryTopK as number) <= 0) {
+  if (input.memoryTopK !== undefined && (!Number.isInteger(input.memoryTopK) || (input.memoryTopK as number) <= 0)) {
     throw new RealmConversationValidationError("options.memoryTopK must be a positive integer");
   }
-  return { memoryTopK: input.memoryTopK as number };
+  if (
+    input.loreTopK !== undefined &&
+    (!Number.isInteger(input.loreTopK) || (input.loreTopK as number) <= 0 || (input.loreTopK as number) > LORE_MAX_TOP_K)
+  ) {
+    throw new RealmConversationValidationError(`options.loreTopK must be an integer from 1 to ${LORE_MAX_TOP_K}`);
+  }
+  return {
+    ...(input.memoryTopK !== undefined ? { memoryTopK: input.memoryTopK as number } : {}),
+    ...(input.loreTopK !== undefined ? { loreTopK: input.loreTopK as number } : {}),
+  };
+}
+
+function validateStoryContext(input: unknown): readonly LoreDialogueRetrievalHitV1[] | undefined {
+  try {
+    return validateLoreDialogueRetrievalHits(input);
+  } catch (error) {
+    throw new RealmConversationValidationError(
+      `storyContext is invalid: ${error instanceof Error ? error.message : "invalid transcript context"}`,
+    );
+  }
+}
+
+function validateLore(input: unknown): readonly LoreEntryV1[] | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  try {
+    return validateLoreEntries(input);
+  } catch (error) {
+    if (error instanceof LoreValidationError) {
+      throw new RealmConversationValidationError(`lore is invalid: ${error.message}`);
+    }
+    throw error;
+  }
 }
 
 function toValidationError(error: unknown, path: string): RealmConversationValidationError {

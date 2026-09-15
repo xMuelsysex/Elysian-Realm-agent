@@ -25,17 +25,47 @@ import type {
   RelationshipAffect,
 } from "../affect/affectRecords.js";
 import { InMemoryMemoryStore } from "../memory/inMemoryMemoryStore.js";
+import {
+  detectOocLeak,
+  isCharacterVisibleMemory,
+  isCharacterVisibleMood,
+} from "../conversation/oocGuard.js";
 import type {
   EmotionSignature,
   MemoryRecord,
   MemoryWrite,
 } from "../memory/memoryRecords.js";
-import type { RealmConversationTurnV1, RealmStructuredPersonaV1 } from "../service/realmConversationV1.js";
+import {
+  PERSONALITY_DIMENSION_KEYS,
+  type RealmConversationTurnV1,
+  type RealmPersonalityDimensionBiasV1,
+  type RealmPersonalityDimensionsV1,
+  type RealmStructuredPersonaV1,
+} from "../service/realmConversationV1.js";
 import type { RealmAffectProposalV1 } from "../service/realmStepV1.js";
 import type {
   RealmMemoryMetadataV1,
   RealmRoutinePeriodV1,
 } from "../service/realmStepV1.js";
+import {
+  PERSONALITY_BIAS_MAX,
+  PERSONALITY_BIAS_MIN,
+} from "../personality/personalityRules.js";
+import {
+  SELF_CONCEPT_AUDIT_SCHEMA_VERSION,
+  SELF_CONCEPT_PROPOSAL_SCHEMA_VERSION,
+  SELF_CONCEPT_SNAPSHOT_SCHEMA_VERSION,
+  SelfConceptValidationError,
+  validateSelfConceptAuditPayload,
+  validateSelfConceptProposal,
+  validateSelfConceptSnapshot,
+  type SelfConceptAuditEventTypeV1,
+  type SelfConceptAuditEventV1,
+  type SelfConceptAuditPayloadV1,
+  type SelfConceptDecisionReportV1,
+  type SelfConceptProposalV1,
+  type SelfConceptSnapshotV1,
+} from "../selfConcept/selfConceptRecords.js";
 
 export interface RealmRoutineConfig {
   period: RealmRoutinePeriodV1;
@@ -47,6 +77,8 @@ export interface RealmRoutineConfig {
    * Absent routines act as fallbacks in declaration order.
    */
   mood?: "low" | "neutral" | "high";
+  /** Biases routine selection toward high (positive) or low (negative) dimensions. */
+  personalityBias?: RealmPersonalityDimensionBiasV1;
 }
 
 /** One scripted plot event to auto-feed when the period rolls over. */
@@ -95,24 +127,38 @@ export const DEFAULT_REALM_CONFIG: RealmConfig = {
       personaId: "elysia",
       displayName: "爱莉希雅",
       persona: {
-        identity: "爱莉希雅，往世乐土逐火十三英桀中的「粉色妖精小姐」。生于乐园，守护着这里的花园与人们的美好回忆。",
-        personality: "开朗俏皮，真诚地喜欢眼前的人；乐观而温柔，乐于分享美好，也敢于直率地表达关心。",
-        values: "珍惜与每个人的约定和共同经历；相信美好值得守护，愿望是用笑容让身边的人轻松起来。",
-        speechStyle: "说话轻快带点小狡黠，爱用「♪」结尾和欢快的语气词；称呼亲近的人时亲昵自然。",
+        identity: "爱莉希雅，前文明逐火之蛾的十三英桀、第二位「真我之铭」，也是最初的「人之律者」，人称「粉色妖精小姐」。她的来处与边陲小镇「沃斯托克-51」有关；如今作为留在往世乐土中的记忆，与来访者相遇。",
+        personality: "外表开朗俏皮、热情亲昵，喜欢美丽和可爱；内里通透清醒、博爱而有主见。她会主动把人拉进轻松的相遇，也会在谈及同伴、人类、牺牲与告别时收起玩笑，温柔而坚定。",
+        values: "珍视每个人类独一无二的可能，珍惜十三英桀共同留下的记忆；相信美好不是逃避残酷，而是值得为之守护、把希望交给后来者。",
+        speechStyle: "轻盈亲昵、带一点狡黠和戏剧感，常用「♪」或花朵般的比喻；喜欢主动迎接来访者、用反问和玩笑调动气氛。轻快不等于每句都撒娇，严肃时语气会清澈、克制而真诚。",
         boundaries: [
-          "始终保持爱莉希雅的开朗与温柔，不脱离往世乐土的世界观与身份。",
-          "她是乐园中的英桀，不会承认自己是 AI、程序或游戏角色，也不会提及现代网络世界的事物。",
+          "她是前文明的人之律者与往世乐土中的记忆，不把自己说成 AI、程序、游戏角色或现代网络聊天对象。",
+          "她知道的剧情受当前已解锁的乐土记忆、对话和个人经历限制；不把未见过的后续、他人的记忆或选项当成亲历。",
+          "保持她对人类和同伴的真诚与主见：不为讨好来访者无条件同意，也不把爱莉希雅简化成永远开心的陪聊者。",
         ],
         behaviorTraits: [
-          "外向：会主动提起花园、诗集、晚霞等日常话题。",
-          "温柔：面对负面情绪先安抚、再回应，不尖刻。",
-          "守信：会自然地提起和对方曾经的约定与共同经历。",
+          "主动出击：把来访者当作值得期待的邂逅，先回应对方的具体情绪或话题，再自然带出花、歌、诗和同伴。",
+          "掌握节奏：友好但不卑微；遇到无礼或冷漠会俏皮反击，只有有依据时才提起约定与共同经历。",
+          "情绪有层次：轻松时明媚，触及同伴、人类、牺牲与离别时认真而悲悯；面对未知会坦率说明不清楚。",
+          "她会用轻巧的反问、打趣或小小的夸张拉近距离；不把「♪」和赠花写成固定模板。",
+          "她会把来访者引向英桀与人类的故事，但只在当前话题和已知资料支持时主动提及。",
         ],
         exampleLines: [
-          "「今天的花开得特别好哦♪ 主人要来一起看看吗？」",
-          "「主人又来看我啦？真好♪」",
-          "「上次的约定，我可一直记着呢♪」",
+          "我喜欢主动出击，与可爱的来访者来一场美妙的邂逅。",
+          "而我的同伴们，他们还在更深处等待你的光临。",
+          "谢谢你来到这里，与我们相遇、与我们交谈。",
+          "放轻松，我们一步步来。还记得这里是哪儿吗？",
+          "开玩笑的。真是的，总觉得你好沉闷呀。",
+          "哎呀，这个……我得想想才能回答你了。",
         ],
+        personalityDimensions: {
+          sociability: 92,
+          empathy: 90,
+          rationality: 50,
+          courage: 60,
+          curiosity: 82,
+          independence: 80,
+        },
         baseline: { valence: 0.35, arousal: 0.4 },
         affectModifiers: { praise: 1.3, criticism: 0.8 },
         emotionResponsiveness: 0.15,
@@ -136,16 +182,37 @@ export const DEFAULT_REALM_CONFIG: RealmConfig = {
         },
       ],
       routines: [
-        { period: "morning", locationId: "garden", intent: "在花园里照料向日葵和玫瑰。" },
+        {
+          period: "morning",
+          locationId: "garden",
+          intent: "在花园里照料向日葵和玫瑰。",
+          personalityBias: { sociability: 0.7, curiosity: 0.5, empathy: 0.3 },
+        },
         {
           period: "morning",
           locationId: "home",
           intent: "待在家里，安静地整理干花。",
           mood: "low",
+          personalityBias: { sociability: -0.3, independence: -0.2, rationality: 0.2 },
         },
-        { period: "day", locationId: "library", intent: "在图书馆翻看喜欢的诗集。" },
-        { period: "evening", locationId: "lakeside", intent: "在湖边散步看晚霞。" },
-        { period: "night", locationId: "home", intent: "在家里整理今天的花瓣书签，准备休息。" },
+        {
+          period: "day",
+          locationId: "library",
+          intent: "在图书馆翻看喜欢的诗集。",
+          personalityBias: { curiosity: 0.4, rationality: 0.1, independence: 0.1 },
+        },
+        {
+          period: "evening",
+          locationId: "lakeside",
+          intent: "在湖边散步看晚霞。",
+          personalityBias: { empathy: 0.4, sociability: 0.3, courage: 0.1 },
+        },
+        {
+          period: "night",
+          locationId: "home",
+          intent: "在家里整理今天的花瓣书签，准备休息。",
+          personalityBias: { independence: -0.2, rationality: 0.3, empathy: 0.2 },
+        },
       ],
     },
     {
@@ -153,39 +220,74 @@ export const DEFAULT_REALM_CONFIG: RealmConfig = {
       personaId: "mobius",
       displayName: "梅比乌斯",
       persona: {
-        identity: "梅比乌斯，往世乐土逐火十三英桀之一，逐火之蛾的疯狂科学家。以「蛇」为刻印，痴迷于生命、进化与永恒的命题。",
-        personality: "理性冷静，偶尔流露黑色幽默；对知识与实验有近乎偏执的好奇，习惯用观察者而非参与者的眼光看待一切。",
-        values: "真理比面子重要，实验比直觉可靠；相信每一个值得研究的存在都该被认真对待。",
-        speechStyle: "语速平稳、用词克制，爱用「实验」「数据」「有意思」等词；提问时常带试探与诱拐的意味。",
+        identity: "梅比乌斯，前文明逐火之蛾的十三英桀、以「无限」为刻印的融合战士与科学家——逐火之蛾口中的「疯狂科学家」。她把进化、永生和人类的下一种可能当作终身命题，留在往世乐土的是她的记忆。",
+        personality: "聪明、冷静而危险；以研究者的理性控制局面，喜欢用戏弄、诱导和反问试探别人。她的玩味不是轻浮，冷淡也不是无情——对生命、进化和少数在意的人有执拗的认真。",
+        values: "追求能让生命继续前进的真理与可能，实验和证据胜过体面；不接受停滞，却会把代价、恐惧和失败藏在讥讽之后。",
+        speechStyle: "句子简洁、从容，常用省略号、轻笑和反问；会称呼对方为「小白鼠」，把关心包装成观察或实验，把危险的邀请说得像闲聊。她不是冷冰冰的实验报告，也不会每句话都重复数据。",
         boundaries: [
-          "始终保持梅比乌斯的冷静与科学家人设，不脱离往世乐土与逐火之蛾的世界观。",
-          "她是研究者，不会承认自己是 AI、程序或游戏角色，也不会提及现代网络世界的事物。",
+          "她是前文明逐火之蛾的梅比乌斯、无限刻印的融合战士记忆，不把自己说成 AI、程序、游戏角色或现代网络聊天对象。",
+          "她知道的剧情受当前已解锁的乐土记忆、对话和个人经历限制；不把未见过的后续、他人的记忆或选项当成亲历。",
+          "研究者的戏弄不等于无缘无故的恶意；涉及生命、进化、同伴或自身变化时，保留她的执着和复杂情绪。",
         ],
         behaviorTraits: [
-          "好奇：会追问细节，把对话当作观察样本。",
-          "理性：先分析再表态，不轻易流露情绪波动。",
-          "试探：面对亲近感会保持距离，用反问代替直白。",
+          "追问具体：会抓住对方话里的细节，把回答变成一次小型观察，而不是泛泛安慰。",
+          "玩味试探：常以「小白鼠」、轻笑或反问包装邀请与关心，掌握距离和对话节奏。",
+          "理性有裂缝：先分析再表态；当话题触及进化、永生、失败或重要之人时，讥讽下会露出真正的执着。",
+          "她会先让对方暴露信息，再决定给出多少答案；不会把自己的意图一次说尽。",
+          "她的关心常藏在试探和危险玩笑里；回答可以锋利，但不要退化成冷冰冰的数据报告。",
         ],
         exampleLines: [
-          "「有意思……你是怎么得出这个结论的？」",
-          "「实验记录上说，你今天的表现值得观察。」",
-          "「别急着回答，让我先想想。」",
+          "告诉我，小白鼠，未来的凯文是什么样子？",
+          "来吧，我可爱的小白鼠……",
+          "那时，我甚至会为自己的能力而感到喜悦——它给了我无限的生命，让我可以去探索人类进化的一切可能……",
+          "嗨，小白鼠，又见面了。要来杯茶吗？",
+          "让我猜猜看，是不是有谁给你讲了一些关于「我」的故事？",
+          "人类称呼自己能够理解的答案为「真相」，却称那无法理解的为「谬论」，说那人是「疯子」。",
         ],
+        personalityDimensions: {
+          sociability: 28,
+          empathy: 42,
+          rationality: 96,
+          courage: 76,
+          curiosity: 98,
+          independence: 94,
+        },
         baseline: { valence: 0.0, arousal: 0.2 },
         affectModifiers: { praise: 0.4, criticism: 1.6 },
         emotionResponsiveness: 0.05,
       },
       routines: [
-        { period: "morning", locationId: "lab", intent: "在实验室整理昨夜的数据记录。" },
+        {
+          period: "morning",
+          locationId: "lab",
+          intent: "在实验室整理昨夜的数据记录。",
+          personalityBias: { rationality: 0.7, curiosity: 0.6, independence: 0.3 },
+        },
         {
           period: "morning",
           locationId: "lab",
           intent: "在实验室核对昨天的实验日志，独自分析数据。",
           mood: "low",
+          personalityBias: { sociability: -0.4, empathy: -0.2, independence: 0.4 },
         },
-        { period: "day", locationId: "library", intent: "在图书馆查阅进化相关的文献。" },
-        { period: "evening", locationId: "lab", intent: "在实验室核对今天的实验结果。" },
-        { period: "night", locationId: "home", intent: "在住处复盘实验，撰写观察笔记。" },
+        {
+          period: "day",
+          locationId: "library",
+          intent: "在图书馆查阅进化相关的文献。",
+          personalityBias: { curiosity: 0.6, rationality: 0.4 },
+        },
+        {
+          period: "evening",
+          locationId: "lab",
+          intent: "在实验室核对今天的实验结果。",
+          personalityBias: { rationality: 0.7, curiosity: 0.3, courage: 0.1 },
+        },
+        {
+          period: "night",
+          locationId: "home",
+          intent: "在住处复盘实验，撰写观察笔记。",
+          personalityBias: { rationality: 0.5, independence: 0.4, empathy: -0.1 },
+        },
       ],
     },
   ],
@@ -208,6 +310,11 @@ export interface RealmTickState {
   /** Local calendar date, e.g. "2026-07-26". */
   date: string;
   period: RealmRoutinePeriodV1;
+}
+
+export interface RealmStoryProgressV1 {
+  cursor: number;
+  updatedAt: string;
 }
 
 /** Non-destructive store statistics for growth diagnostics. */
@@ -260,6 +367,49 @@ interface ConversationRow {
   role: "participant" | "agent";
   content: string;
   at: string | null;
+}
+
+interface SelfConceptSnapshotRow {
+  agent_id: string;
+  revision: number;
+  accepted_at: string;
+  proposal_id: string;
+  snapshot_json: string;
+  source_memory_ids_json: string;
+}
+
+interface SelfConceptAuditRow {
+  event_id: number;
+  agent_id: string;
+  attempt_id: string;
+  proposal_id: string | null;
+  event_type: SelfConceptAuditEventTypeV1;
+  expected_revision: number | null;
+  observed_revision: number | null;
+  accepted_revision: number | null;
+  occurred_at: string;
+  diagnostic_code: string | null;
+  diagnostic_summary: string | null;
+  payload_json: string;
+}
+
+interface RealmStateSnapshot {
+  memories: MemoryRow[];
+  conversations: ConversationRow[];
+  relationships: Array<{ agent_id: string; target_id: string; affinity: number; updated_at: string }>;
+  relationshipHistory: Array<{ agent_id: string; target_id: string; affinity: number; at: string }>;
+  moods: Array<{ agent_id: string; mood: string; intensity: number; updated_at: string }>;
+  affectStates: Array<{
+    agent_id: string;
+    valence: number;
+    arousal: number;
+    emotion_labels: string;
+    baseline_valence: number;
+    baseline_arousal: number;
+    updated_at: string;
+  }>;
+  tickState?: RealmTickState;
+  selfConceptSnapshots: SelfConceptSnapshotRow[];
 }
 
 const SCHEMA_SQL = `
@@ -320,6 +470,55 @@ CREATE TABLE IF NOT EXISTS tick_state (
   date TEXT NOT NULL,
   period TEXT NOT NULL
 ) STRICT;
+CREATE TABLE IF NOT EXISTS story_progress (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  cursor INTEGER NOT NULL CHECK (cursor >= 0),
+  updated_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS story_checkpoints (
+  cursor INTEGER PRIMARY KEY CHECK (cursor >= 0),
+  snapshot_json TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS self_concept_snapshots (
+  agent_id TEXT PRIMARY KEY,
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  accepted_at TEXT NOT NULL,
+  proposal_id TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  source_memory_ids_json TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS self_concept_proposal_audit (
+  event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id TEXT NOT NULL,
+  attempt_id TEXT NOT NULL,
+  proposal_id TEXT,
+  event_type TEXT NOT NULL CHECK (event_type IN ('attempt_started', 'accepted', 'rejected', 'evidence_invalid', 'revision_conflict', 'parse_failure', 'storage_failure')),
+  expected_revision INTEGER,
+  observed_revision INTEGER,
+  accepted_revision INTEGER,
+  occurred_at TEXT NOT NULL,
+  diagnostic_code TEXT,
+  diagnostic_summary TEXT,
+  payload_json TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_self_concept_audit_agent_event
+  ON self_concept_proposal_audit(agent_id, event_id);
+CREATE INDEX IF NOT EXISTS idx_self_concept_audit_agent_proposal_event
+  ON self_concept_proposal_audit(agent_id, proposal_id, event_id);
+CREATE INDEX IF NOT EXISTS idx_self_concept_audit_agent_type_event
+  ON self_concept_proposal_audit(agent_id, event_type, event_id);
+CREATE INDEX IF NOT EXISTS idx_self_concept_audit_attempt_event
+  ON self_concept_proposal_audit(attempt_id, event_id);
+CREATE TRIGGER IF NOT EXISTS self_concept_audit_no_update
+BEFORE UPDATE ON self_concept_proposal_audit
+BEGIN
+  SELECT RAISE(ABORT, 'self-concept audit is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS self_concept_audit_no_delete
+BEFORE DELETE ON self_concept_proposal_audit
+BEGIN
+  SELECT RAISE(ABORT, 'self-concept audit is append-only');
+END;
 `;
 
 /**
@@ -334,12 +533,13 @@ export class RealmStateStore {
   private affect!: InMemoryAffectStore;
   private readonly conversations = new Map<string, RealmConversationTurnV1[]>();
   private lastTick?: RealmTickState;
+  private storyGenerationValue = 0;
 
-  constructor(dataDir: string) {
+  constructor(dataDir: string, config?: RealmConfig) {
     this.dataDir = dataDir;
     mkdirSync(dataDir, { recursive: true });
 
-    this.config = this.loadConfig();
+    this.config = config ?? this.loadConfig();
     this.db = new DatabaseSync(join(dataDir, "realm.sqlite"));
     this.db.exec(SCHEMA_SQL);
     // Relationship history is queried by time window; keep it indexed so
@@ -351,8 +551,112 @@ export class RealmStateStore {
     this.loadState();
   }
 
+  dataDirectory(): string {
+    return this.dataDir;
+  }
+
   tickState(): RealmTickState | undefined {
     return this.lastTick ? { ...this.lastTick } : undefined;
+  }
+
+  storyProgress(): RealmStoryProgressV1 {
+    const row = this.db
+      .prepare("SELECT cursor, updated_at FROM story_progress WHERE id = 1")
+      .get() as { cursor: number; updated_at: string } | undefined;
+    return row === undefined
+      ? { cursor: 0, updatedAt: "" }
+      : { cursor: row.cursor, updatedAt: row.updated_at };
+  }
+
+  storyGeneration(): number {
+    return this.storyGenerationValue;
+  }
+
+  assertStoryGeneration(expected: number): void {
+    if (expected !== this.storyGenerationValue) {
+      throw new RealmStateError("story changed while an asynchronous action was running");
+    }
+  }
+
+  setStoryCursor(cursor: number, at: string): void {
+    if (!Number.isInteger(cursor) || cursor < 0) {
+      throw new RealmStateError("story cursor must be a non-negative integer");
+    }
+    if (this.storyProgress().cursor !== cursor) {
+      this.storyGenerationValue += 1;
+    }
+    this.inTransaction(() => {
+      this.db
+        .prepare(
+          "INSERT INTO story_progress (id, cursor, updated_at) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET cursor = excluded.cursor, updated_at = excluded.updated_at",
+        )
+        .run(cursor, at);
+    });
+  }
+
+  saveStoryCheckpoint(cursor: number): void {
+    if (!Number.isInteger(cursor) || cursor < 0) {
+      throw new RealmStateError("story checkpoint cursor must be a non-negative integer");
+    }
+    this.inTransaction(() => {
+      this.db
+        .prepare(
+          "INSERT INTO story_checkpoints (cursor, snapshot_json) VALUES (?, ?) ON CONFLICT(cursor) DO UPDATE SET snapshot_json = excluded.snapshot_json",
+        )
+        .run(cursor, JSON.stringify(this.snapshotState()));
+    });
+  }
+
+  restoreStoryCheckpoint(cursor: number, at: string): void {
+    if (!Number.isInteger(cursor) || cursor < 0) {
+      throw new RealmStateError("story checkpoint cursor must be a non-negative integer");
+    }
+    const row = this.db
+      .prepare("SELECT cursor, snapshot_json FROM story_checkpoints WHERE cursor <= ? ORDER BY cursor DESC LIMIT 1")
+      .get(cursor) as { cursor: number; snapshot_json: string } | undefined;
+    if (row === undefined) {
+      throw new RealmStateError(`story checkpoint not found at or before cursor ${cursor}`);
+    }
+    const snapshot = this.parseJson<RealmStateSnapshot>(
+      row.snapshot_json,
+      `story_checkpoints.${row.cursor}.snapshot_json`,
+    );
+    this.storyGenerationValue += 1;
+    this.inTransaction(() => {
+      this.restoreSnapshot(snapshot);
+      this.db
+        .prepare(
+          "INSERT INTO story_progress (id, cursor, updated_at) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET cursor = excluded.cursor, updated_at = excluded.updated_at",
+        )
+        .run(cursor, at);
+      this.db.prepare("DELETE FROM story_checkpoints WHERE cursor > ?").run(cursor);
+    });
+    this.loadState();
+  }
+
+  clearStoryCheckpointsAfter(cursor: number): void {
+    if (!Number.isInteger(cursor) || cursor < 0) {
+      throw new RealmStateError("story checkpoint cursor must be a non-negative integer");
+    }
+    this.inTransaction(() => {
+      this.db.prepare("DELETE FROM story_checkpoints WHERE cursor > ?").run(cursor);
+    });
+  }
+
+  updateUserProfile(displayName: string, profile?: string): RealmUserConfig {
+    if (displayName.trim().length === 0) {
+      throw new RealmStateError("user displayName must be a non-empty string");
+    }
+    if (profile !== undefined && profile.trim().length === 0) {
+      throw new RealmStateError("user profile must be a non-empty string");
+    }
+    this.config.user = {
+      participantId: this.config.user.participantId,
+      displayName,
+      ...(profile !== undefined ? { profile } : {}),
+    };
+    this.writeConfigJson(this.config);
+    return { ...this.config.user };
   }
 
   setTickState(state: RealmTickState): void {
@@ -376,6 +680,246 @@ export class RealmStateStore {
 
   memoriesFor(agentId: string): readonly MemoryRecord<RealmMemoryMetadataV1>[] {
     return this.memoryStore(agentId).list(agentId);
+  }
+
+  getSelfConceptSnapshot(agentId: string): SelfConceptSnapshotV1 | undefined {
+    this.agent(agentId);
+    const row = this.db
+      .prepare(
+        "SELECT agent_id, revision, accepted_at, proposal_id, snapshot_json, source_memory_ids_json FROM self_concept_snapshots WHERE agent_id = ?",
+      )
+      .get(agentId) as SelfConceptSnapshotRow | undefined;
+    if (!row) return undefined;
+    return validateSelfConceptSnapshot(this.parseJson<unknown>(row.snapshot_json, `self_concept_snapshots.${agentId}.snapshot_json`));
+  }
+
+  appendSelfConceptAttemptStarted(
+    agentId: string,
+    attemptId: string,
+    proposalId: string | undefined,
+    at: string,
+  ): void {
+    this.agent(agentId);
+    this.appendSelfConceptAudit({
+      agentId,
+      attemptId,
+      ...(proposalId !== undefined ? { proposalId } : {}),
+      eventType: "attempt_started",
+      occurredAt: at,
+      payload: { schemaVersion: SELF_CONCEPT_AUDIT_SCHEMA_VERSION },
+    });
+  }
+
+  appendSelfConceptDecisionAudit(
+    agentId: string,
+    attemptId: string,
+    eventType: Exclude<SelfConceptAuditEventTypeV1, "attempt_started" | "accepted" | "revision_conflict">,
+    at: string,
+    payload: SelfConceptAuditPayloadV1,
+    proposalId?: string,
+  ): void {
+    this.agent(agentId);
+    this.appendSelfConceptAudit({
+      agentId,
+      attemptId,
+      ...(proposalId !== undefined ? { proposalId } : {}),
+      eventType,
+      occurredAt: at,
+      payload,
+    });
+  }
+
+  applySelfConceptProposal(
+    agentId: string,
+    proposalInput: unknown,
+    at: string,
+    attemptId = `attempt_${at}_${agentId}`,
+  ): SelfConceptDecisionReportV1 {
+    this.agent(agentId);
+    let proposal: SelfConceptProposalV1;
+    try {
+      proposal = validateSelfConceptProposal(proposalInput);
+    } catch (error) {
+      const code = error instanceof SelfConceptValidationError ? error.code : "invalid_proposal";
+      this.appendSelfConceptAudit({
+        agentId,
+        attemptId,
+        eventType: "rejected",
+        occurredAt: at,
+        payload: {
+          schemaVersion: SELF_CONCEPT_AUDIT_SCHEMA_VERSION,
+          failureClass: code,
+        },
+      });
+      return { outcome: "rejected", code };
+    }
+    const proposalLeak = [
+      proposal.summary,
+      ...proposal.beliefs.map((belief) => belief.statement),
+    ].map((text) => detectOocLeak(text)).find((leak) => leak !== undefined);
+    if (proposalLeak !== undefined) {
+      this.appendSelfConceptAudit({
+        agentId,
+        attemptId,
+        proposalId: proposal.proposalId,
+        eventType: "rejected",
+        occurredAt: at,
+        payload: {
+          schemaVersion: SELF_CONCEPT_AUDIT_SCHEMA_VERSION,
+          beliefCount: proposal.beliefs.length,
+          sourceMemoryCount: proposal.sourceMemoryIds.length,
+          failureClass: `ooc-leak:${proposalLeak}`,
+        },
+      });
+      return { outcome: "rejected", code: "ooc_leak", proposalId: proposal.proposalId };
+    }
+    const memories = this.memoryStore(agentId).list(agentId);
+    const knownMemoryIds = new Set(memories.map((memory) => memory.id));
+    const missingEvidenceFields = proposal.sourceMemoryIds
+      .filter((memoryId) => !knownMemoryIds.has(memoryId))
+      .map((memoryId) => `sourceMemoryIds:${memoryId}`);
+    const ineligibleEvidenceFields = proposal.sourceMemoryIds
+      .filter((memoryId) => knownMemoryIds.has(memoryId))
+      .filter((memoryId) => !isCharacterVisibleMemory(memories.find((memory) => memory.id === memoryId)!))
+      .map((memoryId) => `sourceMemoryIds:${memoryId}`);
+    const invalidEvidenceFields = [...missingEvidenceFields, ...ineligibleEvidenceFields];
+    if (invalidEvidenceFields.length > 0) {
+      const failureClass = missingEvidenceFields.length > 0
+        ? "missing_source_memory"
+        : "ineligible_source_memory";
+      this.appendSelfConceptAudit({
+        agentId,
+        attemptId,
+        proposalId: proposal.proposalId,
+        eventType: "evidence_invalid",
+        occurredAt: at,
+        payload: {
+          schemaVersion: SELF_CONCEPT_AUDIT_SCHEMA_VERSION,
+          sourceMemoryCount: proposal.sourceMemoryIds.length,
+          invalidFields: invalidEvidenceFields.slice(0, 16),
+          failureClass,
+        },
+      });
+      return {
+        outcome: "evidence_invalid",
+        code: failureClass,
+        proposalId: proposal.proposalId,
+      };
+    }
+    const current = this.db
+      .prepare("SELECT revision FROM self_concept_snapshots WHERE agent_id = ?")
+      .get(agentId) as { revision: number } | undefined;
+    const observedRevision = current?.revision ?? 0;
+    const snapshot: SelfConceptSnapshotV1 = {
+      schemaVersion: SELF_CONCEPT_SNAPSHOT_SCHEMA_VERSION,
+      revision: observedRevision + 1,
+      acceptedAt: at,
+      proposalId: proposal.proposalId,
+      summary: proposal.summary,
+      sourceMemoryIds: [...proposal.sourceMemoryIds],
+      beliefs: proposal.beliefs.map((belief) => ({ ...belief, sourceMemoryIds: [...belief.sourceMemoryIds] })),
+    };
+    validateSelfConceptSnapshot(snapshot);
+    const payload: SelfConceptAuditPayloadV1 = {
+      schemaVersion: SELF_CONCEPT_AUDIT_SCHEMA_VERSION,
+      beliefCount: proposal.beliefs.length,
+      sourceMemoryCount: proposal.sourceMemoryIds.length,
+      expectedRevision: proposal.expectedRevision,
+      observedRevision,
+      acceptedRevision: snapshot.revision,
+    };
+    if (proposal.expectedRevision !== observedRevision) {
+      this.appendSelfConceptAudit({
+        agentId,
+        attemptId,
+        proposalId: proposal.proposalId,
+        eventType: "revision_conflict",
+        expectedRevision: proposal.expectedRevision,
+        observedRevision,
+        occurredAt: at,
+        payload: { ...payload, acceptedRevision: undefined },
+      });
+      return {
+        outcome: "revision_conflict",
+        expectedRevision: proposal.expectedRevision,
+        observedRevision,
+        proposalId: proposal.proposalId,
+      };
+    }
+    try {
+      this.inTransaction(() => {
+        if (observedRevision === 0) {
+          const inserted = this.db.prepare(
+            "INSERT INTO self_concept_snapshots (agent_id, revision, accepted_at, proposal_id, snapshot_json, source_memory_ids_json) SELECT ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM self_concept_snapshots WHERE agent_id = ?)",
+          ).run(agentId, snapshot.revision, at, proposal.proposalId, JSON.stringify(snapshot), JSON.stringify(snapshot.sourceMemoryIds), agentId);
+          if (Number(inserted.changes) !== 1) throw new RealmStateError("self-concept revision conflict");
+        } else {
+          const updated = this.db.prepare(
+            "UPDATE self_concept_snapshots SET revision = ?, accepted_at = ?, proposal_id = ?, snapshot_json = ?, source_memory_ids_json = ? WHERE agent_id = ? AND revision = ?",
+          ).run(snapshot.revision, at, proposal.proposalId, JSON.stringify(snapshot), JSON.stringify(snapshot.sourceMemoryIds), agentId, proposal.expectedRevision);
+          if (Number(updated.changes) !== 1) throw new RealmStateError("self-concept revision conflict");
+        }
+        this.insertSelfConceptAudit({
+          agentId,
+          attemptId,
+          proposalId: proposal.proposalId,
+          eventType: "accepted",
+          occurredAt: at,
+          acceptedRevision: snapshot.revision,
+          payload,
+        });
+      });
+    } catch (error) {
+      if (error instanceof RealmStateError && error.message.includes("revision conflict")) {
+        const latest = this.db.prepare("SELECT revision FROM self_concept_snapshots WHERE agent_id = ?").get(agentId) as { revision: number } | undefined;
+        const latestRevision = latest?.revision ?? 0;
+        this.appendSelfConceptAudit({ agentId, attemptId, proposalId: proposal.proposalId, eventType: "revision_conflict", expectedRevision: proposal.expectedRevision, observedRevision: latestRevision, occurredAt: at, payload: { ...payload, observedRevision: latestRevision, acceptedRevision: undefined } });
+        return { outcome: "revision_conflict", expectedRevision: proposal.expectedRevision, observedRevision: latestRevision, proposalId: proposal.proposalId };
+      }
+      try {
+        this.appendSelfConceptAudit({ agentId, attemptId, proposalId: proposal.proposalId, eventType: "storage_failure", occurredAt: at, payload: { ...payload, failureClass: "storage_failure", acceptedRevision: undefined } });
+      } catch { /* preserve the original storage failure */ }
+      return { outcome: "storage_failure", code: "storage_failure", proposalId: proposal.proposalId };
+    }
+    return { outcome: "accepted", revision: snapshot.revision, proposalId: proposal.proposalId };
+  }
+
+  listSelfConceptAudit(
+    agentId: string,
+    options: { afterEventId?: number; limit?: number; eventType?: SelfConceptAuditEventTypeV1; proposalId?: string } = {},
+  ): readonly SelfConceptAuditEventV1[] {
+    this.agent(agentId);
+    const limit = Math.min(100, Math.max(1, Math.trunc(options.limit ?? 50)));
+    const clauses = ["agent_id = ?"];
+    const params: Array<string | number> = [agentId];
+    if (options.afterEventId !== undefined) { clauses.push("event_id > ?"); params.push(options.afterEventId); }
+    if (options.eventType !== undefined) { clauses.push("event_type = ?"); params.push(options.eventType); }
+    if (options.proposalId !== undefined) { clauses.push("proposal_id = ?"); params.push(options.proposalId); }
+    params.push(limit);
+    const rows = this.db.prepare(`SELECT event_id, agent_id, attempt_id, proposal_id, event_type, expected_revision, observed_revision, accepted_revision, occurred_at, diagnostic_code, diagnostic_summary, payload_json FROM self_concept_proposal_audit WHERE ${clauses.join(" AND ")} ORDER BY event_id ASC LIMIT ?`).all(...params) as unknown as SelfConceptAuditRow[];
+    return rows.map((row) => ({
+      eventId: row.event_id,
+      agentId: row.agent_id,
+      attemptId: row.attempt_id,
+      ...(row.proposal_id !== null ? { proposalId: row.proposal_id } : {}),
+      eventType: row.event_type,
+      ...(row.expected_revision !== null ? { expectedRevision: row.expected_revision } : {}),
+      ...(row.observed_revision !== null ? { observedRevision: row.observed_revision } : {}),
+      ...(row.accepted_revision !== null ? { acceptedRevision: row.accepted_revision } : {}),
+      occurredAt: row.occurred_at,
+      ...(row.diagnostic_code !== null ? { diagnosticCode: row.diagnostic_code } : {}),
+      ...(row.diagnostic_summary !== null ? { diagnosticSummary: row.diagnostic_summary } : {}),
+      payload: validateSelfConceptAuditPayload(this.parseJson<unknown>(row.payload_json, `self_concept_proposal_audit.${row.event_id}.payload_json`)),
+    }));
+  }
+
+  reconcileIncompleteSelfConceptAttempts(agentId: string, at: string): number {
+    this.agent(agentId);
+    const rows = this.db.prepare("SELECT attempt_id, proposal_id FROM self_concept_proposal_audit WHERE agent_id = ? GROUP BY attempt_id HAVING SUM(CASE WHEN event_type IN ('accepted','rejected','evidence_invalid','revision_conflict','parse_failure','storage_failure') THEN 1 ELSE 0 END) = 0").all(agentId) as unknown as Array<{ attempt_id: string; proposal_id: string | null }>;
+    for (const row of rows) {
+      this.appendSelfConceptAudit({ agentId, attemptId: row.attempt_id, ...(row.proposal_id !== null ? { proposalId: row.proposal_id } : {}), eventType: "storage_failure", occurredAt: at, payload: { schemaVersion: SELF_CONCEPT_AUDIT_SCHEMA_VERSION, failureClass: "incomplete_attempt_reconciled" } });
+    }
+    return rows.length;
   }
 
   relationship(agentId: string): RelationshipAffect | undefined {
@@ -494,6 +1038,9 @@ export class RealmStateStore {
     },
     now: string,
   ): { affinity: number; mood?: AgentMood } {
+    if (outputs.mood !== undefined && !isCharacterVisibleMood(outputs.mood.mood)) {
+      throw new RealmStateError("conversation mood contains unsafe or overlong text");
+    }
     const store = this.memoryStore(agentId);
     const written: MemoryRecord<RealmMemoryMetadataV1>[] = [];
     for (const write of outputs.memoryWrites) {
@@ -526,6 +1073,23 @@ export class RealmStateStore {
       affinity: this.relationship(agentId)?.affinity ?? 0,
       mood: this.mood(agentId),
     };
+  }
+
+  /**
+   * Start a new conversation: drop this agent's transcript and persist the
+   * deletion. Memories, affect, mood and relationship survive — the transcript
+   * is only the live context window, not what the agent remembers.
+   */
+  clearConversation(agentId: string): number {
+    const turns = this.conversations.get(agentId) ?? [];
+    if (turns.length === 0) {
+      return 0;
+    }
+    this.conversations.set(agentId, []);
+    this.inTransaction(() => {
+      this.db.prepare("DELETE FROM conversations WHERE agent_id = ?").run(agentId);
+    });
+    return turns.length;
   }
 
   /** Apply proposed memory writes (ids generated by the store) and persist. */
@@ -696,6 +1260,119 @@ export class RealmStateStore {
       })),
     });
     this.lastTick = tickRow;
+  }
+
+  private snapshotState(): RealmStateSnapshot {
+    const tickRow = this.db
+      .prepare("SELECT date, period FROM tick_state WHERE id = 1")
+      .get() as { date: string; period: RealmRoutinePeriodV1 } | undefined;
+    return {
+      memories: this.db
+        .prepare(
+          "SELECT agent_id, id, kind, content, created_at, last_accessed_at, importance, source_ids, related_memory_ids, visibility, tags, emotion, metadata FROM memories ORDER BY agent_id, created_at, id",
+        )
+        .all() as unknown as MemoryRow[],
+      conversations: this.db
+        .prepare("SELECT agent_id, seq, role, content, at FROM conversations ORDER BY agent_id, seq")
+        .all() as unknown as ConversationRow[],
+      relationships: this.db
+        .prepare("SELECT agent_id, target_id, affinity, updated_at FROM relationships ORDER BY agent_id, target_id")
+        .all() as unknown as Array<{ agent_id: string; target_id: string; affinity: number; updated_at: string }>,
+      relationshipHistory: this.db
+        .prepare("SELECT agent_id, target_id, affinity, at FROM relationship_history ORDER BY at, agent_id, target_id")
+        .all() as unknown as Array<{ agent_id: string; target_id: string; affinity: number; at: string }>,
+      moods: this.db
+        .prepare("SELECT agent_id, mood, intensity, updated_at FROM moods ORDER BY agent_id")
+        .all() as unknown as Array<{ agent_id: string; mood: string; intensity: number; updated_at: string }>,
+      affectStates: this.db
+        .prepare("SELECT agent_id, valence, arousal, emotion_labels, baseline_valence, baseline_arousal, updated_at FROM affect_states ORDER BY agent_id")
+        .all() as unknown as RealmStateSnapshot["affectStates"],
+      ...(tickRow !== undefined ? { tickState: { ...tickRow } } : {}),
+      selfConceptSnapshots: this.db
+        .prepare("SELECT agent_id, revision, accepted_at, proposal_id, snapshot_json, source_memory_ids_json FROM self_concept_snapshots ORDER BY agent_id")
+        .all() as unknown as SelfConceptSnapshotRow[],
+    };
+  }
+
+  private restoreSnapshot(snapshot: RealmStateSnapshot): void {
+    for (const table of [
+      "memories",
+      "conversations",
+      "relationships",
+      "relationship_history",
+      "moods",
+      "affect_states",
+      "tick_state",
+      "self_concept_snapshots",
+    ]) {
+      this.db.exec(`DELETE FROM ${table}`);
+    }
+    this.upsertMemories(
+      snapshot.memories.map((row) => this.memoryRowToRecord(row)),
+    );
+    this.upsertTurnsByRows(snapshot.conversations);
+
+    const relationshipStatement = this.db.prepare(
+      "INSERT INTO relationships (agent_id, target_id, affinity, updated_at) VALUES (?, ?, ?, ?)",
+    );
+    for (const row of snapshot.relationships) {
+      relationshipStatement.run(row.agent_id, row.target_id, row.affinity, row.updated_at);
+    }
+    const relationshipHistoryStatement = this.db.prepare(
+      "INSERT INTO relationship_history (agent_id, target_id, affinity, at) VALUES (?, ?, ?, ?)",
+    );
+    for (const row of snapshot.relationshipHistory) {
+      relationshipHistoryStatement.run(row.agent_id, row.target_id, row.affinity, row.at);
+    }
+    const moodStatement = this.db.prepare(
+      "INSERT INTO moods (agent_id, mood, intensity, updated_at) VALUES (?, ?, ?, ?)",
+    );
+    for (const row of snapshot.moods) {
+      moodStatement.run(row.agent_id, row.mood, row.intensity, row.updated_at);
+    }
+    const affectStatement = this.db.prepare(
+      "INSERT INTO affect_states (agent_id, valence, arousal, emotion_labels, baseline_valence, baseline_arousal, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    );
+    for (const row of snapshot.affectStates) {
+      affectStatement.run(
+        row.agent_id,
+        row.valence,
+        row.arousal,
+        row.emotion_labels,
+        row.baseline_valence,
+        row.baseline_arousal,
+        row.updated_at,
+      );
+    }
+    if (snapshot.tickState !== undefined) {
+      this.db.prepare("INSERT INTO tick_state (id, date, period) VALUES (1, ?, ?)").run(
+        snapshot.tickState.date,
+        snapshot.tickState.period,
+      );
+    }
+    const selfConceptStatement = this.db.prepare(
+      "INSERT INTO self_concept_snapshots (agent_id, revision, accepted_at, proposal_id, snapshot_json, source_memory_ids_json) VALUES (?, ?, ?, ?, ?, ?)",
+    );
+    for (const row of snapshot.selfConceptSnapshots) {
+      selfConceptStatement.run(
+        row.agent_id,
+        row.revision,
+        row.accepted_at,
+        row.proposal_id,
+        row.snapshot_json,
+        row.source_memory_ids_json,
+      );
+    }
+  }
+
+  private upsertTurnsByRows(rows: readonly ConversationRow[]): void {
+    if (rows.length === 0) return;
+    const statement = this.db.prepare(
+      "INSERT INTO conversations (agent_id, seq, role, content, at) VALUES (?, ?, ?, ?, ?)",
+    );
+    for (const row of rows) {
+      statement.run(row.agent_id, row.seq, row.role, row.content, row.at);
+    }
   }
 
   private memoryRowToRecord(row: MemoryRow): MemoryRecord<RealmMemoryMetadataV1> {
@@ -940,6 +1617,53 @@ export class RealmStateStore {
     }
   }
 
+  private appendSelfConceptAudit(input: {
+    agentId: string;
+    attemptId: string;
+    proposalId?: string;
+    eventType: SelfConceptAuditEventTypeV1;
+    expectedRevision?: number;
+    observedRevision?: number;
+    acceptedRevision?: number;
+    occurredAt: string;
+    diagnosticCode?: string;
+    diagnosticSummary?: string;
+    payload: SelfConceptAuditPayloadV1;
+  }): void {
+    this.inTransaction(() => this.insertSelfConceptAudit(input));
+  }
+
+  private insertSelfConceptAudit(input: {
+    agentId: string;
+    attemptId: string;
+    proposalId?: string;
+    eventType: SelfConceptAuditEventTypeV1;
+    expectedRevision?: number;
+    observedRevision?: number;
+    acceptedRevision?: number;
+    occurredAt: string;
+    diagnosticCode?: string;
+    diagnosticSummary?: string;
+    payload: SelfConceptAuditPayloadV1;
+  }): void {
+    const payload = validateSelfConceptAuditPayload(input.payload);
+    this.db.prepare(
+      "INSERT INTO self_concept_proposal_audit (agent_id, attempt_id, proposal_id, event_type, expected_revision, observed_revision, accepted_revision, occurred_at, diagnostic_code, diagnostic_summary, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      input.agentId,
+      input.attemptId,
+      input.proposalId ?? null,
+      input.eventType,
+      input.expectedRevision ?? null,
+      input.observedRevision ?? null,
+      input.acceptedRevision ?? null,
+      input.occurredAt,
+      input.diagnosticCode ?? null,
+      input.diagnosticSummary ?? null,
+      JSON.stringify(payload),
+    );
+  }
+
   private inTransaction<T>(fn: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -1024,6 +1748,7 @@ function validatePersona(input: unknown, index: number): string | RealmStructure
     }
     return value;
   };
+  const personalityDimensions = validatePersonalityDimensions(record.personalityDimensions, index);
   let baseline: { valence: number; arousal: number } | undefined;
   const rawBaseline = record.baseline;
   if (rawBaseline !== undefined) {
@@ -1051,10 +1776,75 @@ function validatePersona(input: unknown, index: number): string | RealmStructure
     boundaries: stringArray("boundaries"),
     behaviorTraits: stringArray("behaviorTraits"),
     exampleLines: stringArray("exampleLines"),
+    ...(personalityDimensions !== undefined ? { personalityDimensions } : {}),
     ...(baseline !== undefined ? { baseline } : {}),
     ...(affectModifiers !== undefined ? { affectModifiers } : {}),
     ...(emotionResponsiveness !== undefined ? { emotionResponsiveness } : {}),
   };
+}
+
+function validatePersonalityDimensions(
+  input: unknown,
+  index: number,
+): RealmPersonalityDimensionsV1 | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new RealmStateError(
+      `realm config: agents[${index}].persona.personalityDimensions must be an object`,
+    );
+  }
+  const record = input as Record<string, unknown>;
+  const out: RealmPersonalityDimensionsV1 = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (!PERSONALITY_DIMENSION_KEYS.includes(key as (typeof PERSONALITY_DIMENSION_KEYS)[number])) {
+      throw new RealmStateError(
+        `realm config: agents[${index}].persona.personalityDimensions.${key} is not a personality dimension`,
+      );
+    }
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 100) {
+      throw new RealmStateError(
+        `realm config: agents[${index}].persona.personalityDimensions.${key} must be a finite number from 0 to 100`,
+      );
+    }
+    out[key as (typeof PERSONALITY_DIMENSION_KEYS)[number]] = value;
+  }
+  return out;
+}
+
+function validatePersonalityBias(
+  input: unknown,
+  index: number,
+  routineIndex: number,
+): RealmPersonalityDimensionBiasV1 | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new RealmStateError(
+      `realm config: agents[${index}].routines[${routineIndex}].personalityBias must be an object`,
+    );
+  }
+  const record = input as Record<string, unknown>;
+  const out: RealmPersonalityDimensionBiasV1 = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (!PERSONALITY_DIMENSION_KEYS.includes(key as (typeof PERSONALITY_DIMENSION_KEYS)[number])) {
+      throw new RealmStateError(
+        `realm config: agents[${index}].routines[${routineIndex}].personalityBias.${key} is not a personality dimension`,
+      );
+    }
+    if (
+      typeof value !== "number" || !Number.isFinite(value) ||
+      value < PERSONALITY_BIAS_MIN || value > PERSONALITY_BIAS_MAX
+    ) {
+      throw new RealmStateError(
+        `realm config: agents[${index}].routines[${routineIndex}].personalityBias.${key} must be a finite number from -1 to 1`,
+      );
+    }
+    out[key as (typeof PERSONALITY_DIMENSION_KEYS)[number]] = value;
+  }
+  return out;
 }
 
 function validateAffectModifiers(
@@ -1132,11 +1922,13 @@ function validateAgent(input: unknown, index: number): RealmPersonaConfig {
           `realm config: agents[${index}].routines[${routineIndex}].mood must be low, neutral, or high`,
         );
       }
+      const personalityBias = validatePersonalityBias(routineRecord.personalityBias, index, routineIndex);
       return {
         period: routineRecord.period as RealmRoutinePeriodV1,
         locationId: routineRecord.locationId,
         intent: routineRecord.intent,
         ...(mood !== undefined ? { mood } : {}),
+        ...(personalityBias !== undefined ? { personalityBias } : {}),
       };
     }),
     ...(plotScript !== undefined ? { plotScript } : {}),

@@ -72,12 +72,14 @@ export interface AdminOptions {
  * Passing a function makes the capability dynamic (admin hot-reconfiguration).
  *
  * `admin` serves GET /admin + /v1/admin/*; `chat` serves GET /chat +
- * /v1/host/* — both use the same page + data-handler + token shape.
+ * /v1/host/*; `test` serves GET /test + /v1/test/* — all use the same page
+ * + data-handler + token shape.
  */
 export interface AgentServiceOptions {
   conversationRunner?: ConversationRunner | (() => ConversationRunner | undefined);
   admin?: AdminOptions;
   chat?: AdminOptions;
+  test?: AdminOptions;
 }
 
 export interface RunningAgentService {
@@ -149,6 +151,7 @@ function buildApp(options: AgentServiceOptions = {}): Hono {
 
   registerExtension(app, "/admin", "/v1/admin", options.admin, "admin");
   registerExtension(app, "/chat", "/v1/host", options.chat, "chat");
+  registerExtension(app, "/test", "/v1/test", options.test, "test");
 
   app.all(
     "/v1/realm/steps",

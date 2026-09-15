@@ -12,8 +12,11 @@ import {
 import { ADMIN_PAGE_HTML } from "../service/adminPage.js";
 import { createConversationHub } from "../service/conversationBootstrap.js";
 import { CHAT_PAGE_HTML } from "./chatPage.js";
-import { createHostApiHandler } from "./hostApi.js";
+import { TEST_PAGE_HTML } from "./testPage.js";
+import { createHostAdminApiHandler, createHostApiHandler } from "./hostApi.js";
+import { createHostTestApiHandler } from "./testApi.js";
 import { RealmHost } from "./realmHost.js";
+import { RealmProfileManager } from "./realmProfiles.js";
 import { RealmStateStore } from "./realmState.js";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -24,7 +27,8 @@ try {
   const hub = createConversationHub();
   const dataDir = process.env.ELYSIAN_REALM_DATA ?? "./realm-data";
   const state = new RealmStateStore(dataDir);
-  const host = new RealmHost(state, () => hub.getRunner(), { llm: () => hub.getLlm() });
+  const profiles = new RealmProfileManager(state);
+  const host = new RealmHost(profiles, () => hub.getRunner(), { llm: () => hub.getLlm() });
 
   const adminToken = process.env.ELYSIAN_ADMIN_TOKEN;
   const extensionsAllowed = LOOPBACK_HOSTS.has(config.host) || adminToken !== undefined;
@@ -38,13 +42,21 @@ try {
     page,
     ...(adminToken ? { token: adminToken } : {}),
   });
+  const conversationAdmin = hub.createAdminHandler();
+  const realmAdmin = createHostAdminApiHandler(host);
+  const testApi = createHostTestApiHandler(host, () => hub.getStatus());
+  const adminHandler: AdminOptions["handler"] = async (method, path, body) => {
+    const result = await conversationAdmin(method, path, body);
+    return result ?? realmAdmin(method, path, body);
+  };
 
   const running = await startAgentService(config, {
     conversationRunner: () => hub.getRunner(),
     ...(extensionsAllowed
       ? {
-          admin: extension(hub.createAdminHandler(), ADMIN_PAGE_HTML),
+          admin: extension(adminHandler, ADMIN_PAGE_HTML),
           chat: extension(createHostApiHandler(host), CHAT_PAGE_HTML),
+          test: extension(testApi, TEST_PAGE_HTML),
         }
       : {}),
   });
@@ -77,7 +89,7 @@ try {
 
   const base = `http://${config.host}:${running.address.port}`;
   console.log(`elysian-realm host listening on ${base}`);
-  console.log(`realm data: ${dataDir} (${state.config.agents.length} agent(s))`);
+  console.log(`realm data: ${dataDir} (${state.config.agents.length} agent(s), ${host.listProfiles().length} profile(s))`);
   logTick(firstTick);
   const status = hub.getStatus();
   console.log(

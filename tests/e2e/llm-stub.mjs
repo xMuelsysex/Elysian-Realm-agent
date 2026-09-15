@@ -32,6 +32,13 @@ const server = createServer((req, res) => {
       if (systemText.includes("analyze how a roleplayed character")) {
         // Affect analysis after a conversation exchange.
         replyTexts = [ANALYSIS_JSON];
+      } else if (systemText.includes("聊天界面的剧情向导")) {
+        const sceneIds = [...userText.matchAll(/\[sceneId=([^\]]+)\]/g)].map((match) => match[1]);
+        replyTexts = [JSON.stringify({
+          overview: "角色正在依据已解锁的剧情继续前行，当前故事线索仍在逐步展开。",
+          recaps: sceneIds.map((sceneId) => ({ sceneId, text: "这一场景记录了当前故事线索的一次推进。" })),
+          questions: ["这段剧情接下来会怎样发展？", "你怎么看待当前遇到的人和事？", "我可以从哪里开始了解这段故事？"],
+        })];
       } else if (systemText.includes("inner voice of")) {
         // Nightly reflection: a JSON array citing at least one evidence id.
         const firstId = /id=([A-Za-z0-9_]+)/.exec(userText)?.[1] ?? "e1";

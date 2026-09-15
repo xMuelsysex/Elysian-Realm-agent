@@ -7,3 +7,7 @@ dist/
 .DS_Store
 realm-data/
 .playwright-mcp/
+.ace-tool/
+.bh3-dialogue-crawl.json
+
+.bh3-dialogue-crawl.json
