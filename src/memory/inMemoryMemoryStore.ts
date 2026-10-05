@@ -11,6 +11,7 @@ import { assertUniqueMemoryId, MemoryValidationError, validateMemoryWrite } from
 
 export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
   private readonly records: Array<MemoryRecord<Metadata>> = [];
+  private readonly knownIds = new Set<string>();
   private nextGeneratedId = 1;
 
   constructor(initialRecords: readonly MemoryRecord<Metadata>[] = []) {
@@ -22,7 +23,7 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
   remember(agentId: string, write: MemoryWrite<Metadata>): MemoryRecord<Metadata> {
     const normalized = validateMemoryWrite(agentId, write);
     const id = normalized.id ?? this.generateId();
-    assertUniqueMemoryId(new Set(this.records.map((record) => record.id)), id);
+    assertUniqueMemoryId(this.knownIds, id);
 
     const record: MemoryRecord<Metadata> = {
       id,
@@ -41,6 +42,7 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
     };
 
     this.records.push(record);
+    this.knownIds.add(id);
     return cloneMemoryRecord(record);
   }
 
@@ -158,7 +160,7 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
     if (record.supersededBy !== undefined && record.supersededBy.trim().length === 0) {
       throw new MemoryValidationError(["record.supersededBy must be a non-empty string"]);
     }
-    assertUniqueMemoryId(new Set(this.records.map((existingRecord) => existingRecord.id)), record.id);
+    assertUniqueMemoryId(this.knownIds, record.id);
 
     this.records.push({
       id: record.id,
@@ -177,6 +179,7 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
       ...(record.supersededBy !== undefined ? { supersededBy: record.supersededBy } : {}),
       metadata: normalized.metadata,
     });
+    this.knownIds.add(record.id);
   }
 
   private generateId(): string {
@@ -184,7 +187,7 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
     do {
       id = `memory_${String(this.nextGeneratedId).padStart(4, "0")}`;
       this.nextGeneratedId += 1;
-    } while (this.records.some((record) => record.id === id));
+    } while (this.knownIds.has(id));
     return id;
   }
 }
