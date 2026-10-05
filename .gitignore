@@ -6,8 +6,14 @@ dist/
 *.log
 .DS_Store
 realm-data/
+.bench-data/
 .playwright-mcp/
 .ace-tool/
 .bh3-dialogue-crawl.json
 
 .bh3-dialogue-crawl.json
+.workflow/
+.codegraph/
+.pi/
+.maestroignore
+.bh3-index-check.json
