@@ -1,5 +1,12 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-10-05 收尾战（续）：反例修复与独立复审
+
+- `8444b05` 修掉 `e222b24` 引入的真反例（`importRecord()` 对 `record.id` 取单次快照），修复经新的独立 agent 复审：旧/修复前/修复后三段对照为「拒绝 / 接受重复 / 拒绝」。
+- 七字段 getter 扩展未发现新反例；同时暴露三处 **pre-existing** 的 getter 缝隙（`validation.ts` 多次读取字段、`emotion.valence` 值域绕过、`metadata` 无深快照），均需非 JSON 输入触达，已记入任务记录遗留。
+- 最终 HEAD `8444b05` 上重跑帧级 e2e：17 条 PASS，`METRIC sse_first_delta_ms=22 / sse_total_ms=642 / sse_frames=4`；`npm test` 305/305。
+- 今晚累计 9 个提交（`551d8c6` → `8444b05`），未 push；工作区 clean。
+
 ## 2026-10-05 收尾战：累积提交 + 真治理 + O(n²) 修复
 
 - 累积工作按主题落为 5 个提交：`551d8c6` 记忆检索、`3e92268` 主动联系与失效治理、`764beaf` OOC 防线、`6346890` 架构图与任务留痕、`55465c4` 仓库卫生；随后 `e222b24` 修复 O(n²)、`4ff7144` 修正文档漂移。本次补 README 漏网版本号 `0.82.1`→`0.84.1`；不包含 `realm-data/`、未 push。详细事实见 `.claude/tasks/2026-10-05-worktree-consolidation/task.md`。

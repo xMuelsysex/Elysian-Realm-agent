@@ -47,6 +47,9 @@
    - 真实 per-turn 路径（重建 store + 一次完整 retrieve）n=8000：**1514.2 ms → 67.4 ms**；新旧完整返回结果 deepEqual（含分数、诊断与 touched 记录）。
 5. **独立对抗验证**（作者≠Hacker）：**发现一个真反例**。`importRecord()` 对 `record.id` 多次读取（:142/:163/:166/:182），使 `knownIds` 可与实际记录错位：带副作用 getter 的构造输入下，旧实现拒绝重复 id，新实现接受（探针 `COUNTEREXAMPLE_CONFIRMED`，退出码 1）。该反例需要带副作用的 JS getter，**未证明可经 HTTP/JSON/SQLite 输入触发**。修复方向为把 id 取单次快照；修复提交与复审状态见结论。
 
+6. 最终 HEAD `8444b05` 的帧级 e2e（独立 worktree + 本地 stub）：退出码 0，17 条 PASS；`METRIC sse_first_delta_ms=22` / `sse_total_ms=642` / `sse_frames=4` / `sse_reply_chars=15`；含 `applied` 终态（affinity=3 mood=开心 analysis=llm）、history 2 轮、relationship history 1 行、夜间循环 6 条记忆且 4 条模板 withheld、govern 默认 dry-run、json 回退、第二角色可列。`npm run typecheck` 退出码 0；`npm test` 305 pass / fail 0。
+7. 反例修复后的标度复测（n=8000，warmup≥1 + ≥5 次取 p50）：construct 优化前 1534.5 ms / 修复前 8.0 ms / 修复后 6.1 ms；construct+retrieve 1655.8 ms / 65.8 ms / 63.1 ms；修复后约 0.77–1.26 µs/条（构造）与 7.89–8.11 µs/条（构造+检索）。
+
 ## 结论
 
 - 简报收尾时，5 个累积提交 + 性能修复 + 文档修正均已落库、未 push，工作区 clean；此为文档整理前的状态，不把并发修复状态混入该快照。
@@ -56,4 +59,13 @@
 - 本任务记录由收尾 agent 汇总；反例修复的复审结果见下一行。
 - 修复提交与复审结果待补。
 
-<!-- PENDING: fix-id-snapshot re-verification -->
+- 反例已修并被独立复审确认；修复不改变错误文案、公开签名与 JSON 形状，性能不回退。
+- 残留（已验证、非本次引入、当前不可达）：`validateMemoryWrite` 对同字段多次读取，在 getter/proxy 输入下可能出现「校验值 ≠ 存储值」（含空 agentId/空 content/非法日期/越界 importance、`emotion.valence` 值域绕过、`metadata` 无深快照）。三处均在 `8444b05` 之前就存在，且需非 JSON 输入才能触达；是否收紧是独立决策，本任务未改。
+- `src/lore/loreDialogueRetrieval.ts#scoreScene` 仍未接入 BM25。
+
+### 反例发现与修复（作者≠Hacker）
+
+- `e222b24` 的 `knownIds` 缓存被独立对抗验证找到真反例：`importRecord()` 对 `record.id` 多次读取（旧 :142/:163/:166/:182），带副作用 getter 的构造输入可使缓存与实际记录错位，于是 `remember()`（只查缓存）接受旧实现会拒绝的重复 id。判定：中等影响、不需非法字段值，但**需带副作用的 JS getter，未证明可经 HTTP/JSON/SQLite 输入触发**。
+- 修复提交 `8444b05`：`importRecord()` 开头 `const id = record.id;` 取单次快照，后续校验/查重/写入/缓存全用该快照（1 文件 +6/-4）。
+- 复审（新的独立 agent，非作者）：反例回归三段对照——旧 `e222b24^` 拒绝（idReads=3）、修复前 `ea032d3` 接受（idReads=4、两条 victim）、修复后 `8444b05` 拒绝（idReads=1、一条 victim）。七字段 getter 扩展未发现属于本次提交的新反例；四个规模的完整返回值跨三版本 `deepEqual`。工作树已清理。
+- 发现的既有问题（`pre-existing`，三个版本表现一致，不计本次回归）：字段校验与存储值可能不一致（`validation.ts:42` 校验后 `:58-61` 又读，`inMemoryMemoryStore.ts:143/169` 同型）、嵌套 `emotion.valence` getter 可绕过值域校验（`validation.ts:167` + `inMemoryMemoryStore.ts:179`）、`metadata` 未做深快照（`validation.ts:67` + `retrieval.ts:133`）。三者均需非 JSON 输入（getter/proxy）才能触达。
