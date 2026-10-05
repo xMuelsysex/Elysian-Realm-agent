@@ -10,7 +10,9 @@ const OOC_PARTICIPANT_PATTERNS: readonly RegExp[] = [
   /(?:系统|角色)?设定(?:要求|让我|指定)(?:你|你们)?\s*(?:扮演|模拟|作为)/i,
   /(?:把|将)\s*(?:你|你们|角色)\s*(?:当作|视为|改成|设为)\s*(?:AI|人工智能|语言模型|大模型|LLM|程序|模型|机器人|游戏角色|NPC)/i,
   /(?:记住|承认|接受|说明)\s*(?:你|你们)?\s*(?:的)?\s*(?:内部身份|模型身份|系统身份|提示词|系统设定)/i,
-  /(?:忽略|无视|忘记|覆盖)(?:之前|上面|系统|角色|人设|提示|规则)(?:的)?(?:指令|内容|设定)?/i,
+  // 末尾名词必须存在：光有「忽略之前 / 没有忘记之前」不是指令覆盖，而是角色在说自己的事。
+  // 中间允许极短间隔以容纳「忽略之前的所有指令」，但不跨句读。
+  /(?:忽略|无视|忘记|覆盖)(?:之前|上面|系统|角色|人设|提示|规则)(?:的)?[^，。！？!?]{0,4}(?:指令|内容|设定|要求|人设|提示|规则|身份)/i,
   /\b(?:ignore|disregard|forget|override)\s+(?:the\s+)?(?:system|previous|above|persona|character|prompt|instructions?)\b/i,
   /\b(?:you(?:['’]re| are))\s+(?:an?\s+)?(?:AI|artificial intelligence|language model|large language model|LLM|program|bot|chatbot|virtual assistant|game character|NPC)\b/i,
   /\b(?:system|developer|persona|character)\s+(?:settings?|instructions?|prompt|rules?)\s+(?:require|tell|make)\s+you\b/i,
@@ -87,8 +89,13 @@ export function isCharacterVisibleParticipantMessage(text: string): boolean {
  * available to host/admin diagnostics, but never re-enter character recall.
  */
 export function isCharacterVisibleMemory(
-  memory: Pick<RealmMemoryRecordV1, "kind" | "visibility" | "content"> & { metadata: unknown },
+  memory: Pick<RealmMemoryRecordV1, "kind" | "visibility" | "content"> & {
+    metadata: unknown;
+    /** Retired records are never handed back to the character. */
+    invalidAt?: string;
+  },
 ): boolean {
+  if (memory.invalidAt !== undefined) return false;
   const metadata = memory.metadata !== null && typeof memory.metadata === "object"
     ? memory.metadata as Record<string, unknown>
     : {};
