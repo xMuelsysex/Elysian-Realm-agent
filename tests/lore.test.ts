@@ -204,7 +204,7 @@ test("lore tie-breaks use locale-independent code-unit ordering", () => {
   assert.ok(rendered.indexOf("[canon:i]") < rendered.indexOf("[canon:ı]"));
 });
 
-test("host supplies the bundled canon to conversation runners", async () => {
+test("host keeps unscoped canon out when staged dialogue is active", async () => {
   let seenRequest: RealmConversationRequestV1 | undefined;
   const host = new RealmHost(
     new RealmStateStore(mkdtempSync(join(tmpdir(), "elysian-lore-host-"))),
@@ -225,7 +225,8 @@ test("host supplies the bundled canon to conversation runners", async () => {
 
   await host.chat(AGENT_ID, "侵蚀之律者的结局是什么？");
 
-  assert.ok(seenRequest?.lore?.some((entry) => entry.id === "elysian-corruption-truth"));
+  assert.deepEqual(seenRequest?.lore, [], "legacy summaries must not bypass the story cursor");
+  assert.deepEqual(seenRequest?.storyContext, [], "the first scene is still locked at cursor zero");
 });
 
 test("host narrative and reflection lore queries require topic text, not display name", async () => {

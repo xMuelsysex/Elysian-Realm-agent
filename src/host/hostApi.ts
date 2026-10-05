@@ -11,27 +11,158 @@ import type { PlotEventTarget, PlotEventType } from "../affect/affectRecords.js"
 import type { RealmHost } from "./realmHost.js";
 
 const HISTORY_PREFIX = "/v1/host/history/";
+const PROFILE_HISTORY_PREFIX = "/v1/host/profile-history/";
+const PROACTIVE_PREFIX = "/v1/host/proactive/";
 
 export function createHostApiHandler(host: RealmHost): AdminRequestHandler {
   return async (method, path, body): Promise<AdminRequestResult | undefined> => {
-    if (path === "/v1/host/state" && method === "GET") {
-      return { status: 200, body: { user: host.user(), agents: host.listAgents() } };
+    if (path === "/v1/host/profiles" && method === "GET") {
+      return { status: 200, body: { profiles: host.listProfiles() } };
     }
 
+    const stateProfileId = path.startsWith("/v1/host/state/")
+      ? decodePathSegment(path.slice("/v1/host/state/".length), "profileId")
+      : undefined;
+    if (stateProfileId !== undefined && method === "GET") {
+      if (typeof stateProfileId !== "string") return stateProfileId;
+      return {
+        status: 200,
+        body: {
+          user: host.user(stateProfileId),
+          agents: host.listAgents(stateProfileId),
+          story: host.storyProgress(stateProfileId),
+        },
+      };
+    }
+    if (path === "/v1/host/state" && method === "GET") {
+      return {
+        status: 200,
+        body: { user: host.user(), agents: host.listAgents(), story: host.storyProgress() },
+      };
+    }
+
+    if (path === "/v1/host/story-overview" && method === "POST") {
+      if (!isRecord(body)) {
+        return badRequest("request body must be a JSON object");
+      }
+      if (typeof body.agentId !== "string" || body.agentId.trim().length === 0) {
+        return badRequest("agentId is a required non-empty string");
+      }
+      const profileId = optionalProfileId(body.profileId);
+      if (profileId.error !== undefined) return badRequest(profileId.error);
+      try {
+        return {
+          status: 200,
+          body: await host.storyOverview(body.agentId, profileId.value),
+        };
+      } catch (error) {
+        return unavailable(errorText(error));
+      }
+    }
+
+    const statsProfileId = path.startsWith("/v1/host/stats/")
+      ? decodePathSegment(path.slice("/v1/host/stats/".length), "profileId")
+      : undefined;
+    if (statsProfileId !== undefined && method === "GET") {
+      if (typeof statsProfileId !== "string") return statsProfileId;
+      try {
+        return { status: 200, body: host.stats(statsProfileId) };
+      } catch (error) {
+        return badRequest(errorText(error));
+      }
+    }
     if (path === "/v1/host/stats" && method === "GET") {
       return { status: 200, body: host.stats() };
     }
 
-    if (path.startsWith(HISTORY_PREFIX) && method === "GET") {
-      let agentId: string;
-      try {
-        agentId = decodeURIComponent(path.slice(HISTORY_PREFIX.length));
-      } catch {
-        // Malformed percent-encoding is a client error, not a server fault.
-        return badRequest("agentId must be valid percent-encoding");
+    if (method === "GET" && (path.startsWith(HISTORY_PREFIX) || path.startsWith(PROFILE_HISTORY_PREFIX))) {
+      const prefix = path.startsWith(PROFILE_HISTORY_PREFIX) ? PROFILE_HISTORY_PREFIX : HISTORY_PREFIX;
+      const segments = path.slice(prefix.length).split("/");
+      if (segments.length === 2) {
+        const profileId = decodePathSegment(segments[0], "profileId");
+        const agentId = decodePathSegment(segments[1], "agentId");
+        if (typeof profileId !== "string") return profileId;
+        if (typeof agentId !== "string") return agentId;
+        try {
+          return { status: 200, body: { agentId, profileId, turns: host.history(agentId, 50, profileId) } };
+        } catch (error) {
+          return badRequest(errorText(error));
+        }
       }
+      if (segments.length !== 1) return badRequest("profileId and agentId are required");
+      const agentId = decodePathSegment(segments[0], "agentId");
+      if (typeof agentId !== "string") return agentId;
       try {
         return { status: 200, body: { agentId, turns: host.history(agentId) } };
+      } catch (error) {
+        return badRequest(errorText(error));
+      }
+    }
+
+    if (method === "GET" && path.startsWith(PROACTIVE_PREFIX)) {
+      const segments = path.slice(PROACTIVE_PREFIX.length).split("/");
+      if (segments.length !== 2) return badRequest("profileId and agentId are required");
+      const profileId = decodePathSegment(segments[0], "profileId");
+      const agentId = decodePathSegment(segments[1], "agentId");
+      if (typeof profileId !== "string") return profileId;
+      if (typeof agentId !== "string") return agentId;
+      try {
+        return { status: 200, body: host.proactiveInspection(agentId, profileId) };
+      } catch (error) {
+        return badRequest(errorText(error));
+      }
+    }
+
+    if (path === "/v1/host/proactive/read" && method === "POST") {
+      if (!isRecord(body)) {
+        return badRequest("request body must be a JSON object");
+      }
+      if (typeof body.agentId !== "string" || body.agentId.trim().length === 0) {
+        return badRequest("agentId is a required non-empty string");
+      }
+      const profileId = optionalProfileId(body.profileId);
+      if (profileId.error !== undefined) return badRequest(profileId.error);
+      try {
+        const cleared = host.markProactiveRead(body.agentId, profileId.value);
+        return { status: 200, body: { agentId: body.agentId, profileId: profileId.value, cleared } };
+      } catch (error) {
+        return badRequest(errorText(error));
+      }
+    }
+
+    if (path === "/v1/host/new-conversation" && method === "POST") {
+      if (!isRecord(body)) {
+        return badRequest("request body must be a JSON object");
+      }
+      if (typeof body.agentId !== "string" || body.agentId.trim().length === 0) {
+        return badRequest("agentId is a required non-empty string");
+      }
+      const profileId = optionalProfileId(body.profileId);
+      if (profileId.error !== undefined) return badRequest(profileId.error);
+      try {
+        const cleared = host.newConversation(body.agentId, profileId.value);
+        return { status: 200, body: { agentId: body.agentId, profileId: profileId.value, cleared } };
+      } catch (error) {
+        return badRequest(errorText(error));
+      }
+    }
+
+    if (path === "/v1/host/govern" && method === "POST") {
+      if (body !== undefined && !isRecord(body)) {
+        return badRequest("request body must be a JSON object when present");
+      }
+      const record = (body ?? {}) as Record<string, unknown>;
+      if (record.dryRun !== undefined && typeof record.dryRun !== "boolean") {
+        return badRequest("dryRun must be a boolean");
+      }
+      const profileId = optionalProfileId(record.profileId);
+      if (profileId.error !== undefined) return badRequest(profileId.error);
+      try {
+        // Dry run unless the caller explicitly asks for the change.
+        return {
+          status: 200,
+          body: host.govern({ dryRun: record.dryRun !== false, profileId: profileId.value }),
+        };
       } catch (error) {
         return badRequest(errorText(error));
       }
@@ -47,6 +178,8 @@ export function createHostApiHandler(host: RealmHost): AdminRequestHandler {
       }
       const agentId = record.agentId;
       const content = record.content;
+      const profileId = optionalProfileId(record.profileId);
+      if (profileId.error !== undefined) return badRequest(profileId.error);
       // Streaming mode: emit reply deltas as SSE frames, a "done" event the
       // moment the reply completes (so the page can unlock input), and an
       // "applied" event with the final state once analysis + persistence
@@ -65,6 +198,7 @@ export function createHostApiHandler(host: RealmHost): AdminRequestHandler {
                 (text) => {
                   emit("done", { agentId, reply: text });
                 },
+                profileId.value,
               );
               emit("applied", {
                 agentId: result.agentId,
@@ -81,7 +215,7 @@ export function createHostApiHandler(host: RealmHost): AdminRequestHandler {
         } satisfies AdminStreamResult;
       }
       try {
-        const result = await host.chat(agentId, content);
+        const result = await host.chat(agentId, content, profileId.value);
         return { status: 200, body: result };
       } catch (error) {
         // Chat failures (no LLM configured, empty message, provider errors)
@@ -112,6 +246,8 @@ export function createHostApiHandler(host: RealmHost): AdminRequestHandler {
         return badRequest(`target must be one of: ${PLOT_EVENT_TARGETS.join(", ")}`);
       }
       const target = record.target as PlotEventTarget;
+      const profileId = optionalProfileId(record.profileId);
+      if (profileId.error !== undefined) return badRequest(profileId.error);
       let intensity = 1;
       if (record.intensity !== undefined) {
         if (
@@ -125,8 +261,8 @@ export function createHostApiHandler(host: RealmHost): AdminRequestHandler {
         intensity = record.intensity;
       }
       try {
-        const affect = host.plotEvent(record.agentId, { type, target, intensity });
-        return { status: 200, body: { agentId: record.agentId, affect } };
+        const affect = host.plotEvent(record.agentId, { type, target, intensity }, profileId.value);
+        return { status: 200, body: { agentId: record.agentId, profileId: profileId.value, affect } };
       } catch (error) {
         return badRequest(errorText(error));
       }
@@ -136,8 +272,125 @@ export function createHostApiHandler(host: RealmHost): AdminRequestHandler {
   };
 }
 
+/** Realm profiles, story controls and read-only state for the admin dashboard. */
+export function createHostAdminApiHandler(host: RealmHost): AdminRequestHandler {
+  return async (method, path, body) => {
+    if (path === "/v1/admin/profiles" && method === "GET") {
+      return { status: 200, body: { profiles: host.listProfiles() } };
+    }
+    if (path === "/v1/admin/profiles" && method === "POST") {
+      if (!isRecord(body)) return badRequest("request body must be a JSON object");
+      if (typeof body.profileId !== "string" || typeof body.displayName !== "string") {
+        return badRequest("profileId and displayName are required strings");
+      }
+      if (body.profile !== undefined && typeof body.profile !== "string") {
+        return badRequest("profile must be a string");
+      }
+      try {
+        return {
+          status: 201,
+          body: {
+            profile: host.createProfile({
+              profileId: body.profileId,
+              displayName: body.displayName,
+              ...(body.profile !== undefined ? { profile: body.profile } : {}),
+            }),
+          },
+        };
+      } catch (error) {
+        return badRequest(errorText(error));
+      }
+    }
+
+    const profileMatch = /^\/v1\/admin\/profiles\/([^/]+)$/.exec(path);
+    if (profileMatch !== null && method === "PUT") {
+      const profileId = decodePathSegment(profileMatch[1], "profileId");
+      if (typeof profileId !== "string") return profileId;
+      if (!isRecord(body) || typeof body.displayName !== "string") {
+        return badRequest("displayName is a required string");
+      }
+      if (body.profile !== undefined && typeof body.profile !== "string") {
+        return badRequest("profile must be a string");
+      }
+      try {
+        return {
+          status: 200,
+          body: {
+            profile: host.updateProfile(profileId, {
+              displayName: body.displayName,
+              ...(body.profile !== undefined ? { profile: body.profile } : {}),
+            }),
+          },
+        };
+      } catch (error) {
+        return badRequest(errorText(error));
+      }
+    }
+
+    const storyMatch = /^\/v1\/admin\/profiles\/([^/]+)\/story$/.exec(path);
+    if (storyMatch !== null && method === "POST") {
+      const profileId = decodePathSegment(storyMatch[1], "profileId");
+      if (typeof profileId !== "string") return profileId;
+      if (!isRecord(body) || typeof body.cursor !== "number" || !Number.isInteger(body.cursor)) {
+        return badRequest("cursor is a required integer");
+      }
+      try {
+        return { status: 200, body: { story: host.setStoryCursor(profileId, body.cursor) } };
+      } catch (error) {
+        return badRequest(errorText(error));
+      }
+    }
+
+    const realmMatch = /^\/v1\/admin\/realm(?:\/([^/]+))?$/.exec(path);
+    if (realmMatch !== null && method === "GET") {
+      const profileId = realmMatch[1] === undefined
+        ? undefined
+        : decodePathSegment(realmMatch[1], "profileId");
+      if (typeof profileId !== "string" && profileId !== undefined) return profileId;
+      try {
+        return {
+          status: 200,
+          body: {
+            profile: host.user(profileId),
+            story: host.storyProgress(profileId),
+            agents: host.adminView(profileId),
+          },
+        };
+      } catch (error) {
+        return badRequest(errorText(error));
+      }
+    }
+    return undefined;
+  };
+}
+
+function optionalProfileId(input: unknown): { value?: string; error?: string } {
+  if (input === undefined) return {};
+  if (typeof input !== "string" || input.trim().length === 0) {
+    return { error: "profileId must be a non-empty string" };
+  }
+  return { value: input };
+}
+
+function decodePathSegment(input: string, field: string): string | AdminRequestResult {
+  try {
+    const value = decodeURIComponent(input);
+    return value.length > 0 ? value : badRequest(`${field} must be non-empty`);
+  } catch {
+    return badRequest(`${field} must be valid percent-encoding`);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function badRequest(message: string): AdminRequestResult {
   return { status: 400, body: { error: { code: "INVALID_HOST_REQUEST", message } } };
+}
+
+function unavailable(message: string): AdminRequestResult {
+  return { status: 503, body: { error: { code: "STORY_OVERVIEW_UNAVAILABLE", message } } };
 }
 
 function errorText(error: unknown): string {

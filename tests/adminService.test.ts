@@ -50,6 +50,29 @@ test("admin page and api are reachable without a token on a tokenless instance",
   }
 });
 
+test("test extension uses the same page and API route contract", async () => {
+  const running = await startAgentService(
+    { host: "127.0.0.1", port: 0 },
+    { test: { handler: echoHandler, page: "<!doctype html><title>Elysian Test</title>" } },
+  );
+  try {
+    const base = `http://127.0.0.1:${running.address.port}`;
+    const page = await fetch(`${base}/test`);
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /Elysian Test/);
+
+    const api = await fetch(`${base}/v1/test/status`);
+    assert.equal(api.status, 200);
+    assert.deepEqual(await api.json(), {
+      method: "GET",
+      path: "/v1/test/status",
+      body: null,
+    });
+  } finally {
+    await stopAgentService(running.server);
+  }
+});
+
 test("token-protected admin rejects missing or wrong tokens and accepts the right one", async () => {
   const running = await startAgentService(
     { host: "127.0.0.1", port: 0 },

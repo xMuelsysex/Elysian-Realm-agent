@@ -11,6 +11,7 @@ import { assertUniqueMemoryId, MemoryValidationError, validateMemoryWrite } from
 
 export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
   private readonly records: Array<MemoryRecord<Metadata>> = [];
+  private readonly knownIds = new Set<string>();
   private nextGeneratedId = 1;
 
   constructor(initialRecords: readonly MemoryRecord<Metadata>[] = []) {
@@ -22,7 +23,7 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
   remember(agentId: string, write: MemoryWrite<Metadata>): MemoryRecord<Metadata> {
     const normalized = validateMemoryWrite(agentId, write);
     const id = normalized.id ?? this.generateId();
-    assertUniqueMemoryId(new Set(this.records.map((record) => record.id)), id);
+    assertUniqueMemoryId(this.knownIds, id);
 
     const record: MemoryRecord<Metadata> = {
       id,
@@ -41,6 +42,7 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
     };
 
     this.records.push(record);
+    this.knownIds.add(id);
     return cloneMemoryRecord(record);
   }
 
@@ -90,6 +92,33 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
     };
   }
 
+  /**
+   * Retire records without deleting them: an invalidated memory stays readable
+   * for provenance but never comes back through retrieval or a projection.
+   */
+  invalidate(
+    agentId: string,
+    memoryIds: readonly string[],
+    at: string,
+    supersededBy?: string,
+  ): number {
+    const targets = new Set(memoryIds);
+    let changed = 0;
+    for (let index = 0; index < this.records.length; index += 1) {
+      const record = this.records[index];
+      if (record.agentId !== agentId || !targets.has(record.id) || record.invalidAt !== undefined) {
+        continue;
+      }
+      this.records[index] = {
+        ...record,
+        invalidAt: at,
+        ...(supersededBy !== undefined ? { supersededBy } : {}),
+      };
+      changed += 1;
+    }
+    return changed;
+  }
+
   private touchSelected(memoryIds: readonly string[], now: string): void {
     const selectedIds = new Set(memoryIds);
     for (let index = 0; index < this.records.length; index += 1) {
@@ -109,8 +138,10 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
   }
 
   private importRecord(record: MemoryRecord<Metadata>): void {
+    // Read id once: a getter or proxy could otherwise desync the index from the stored record.
+    const id = record.id;
     const normalized = validateMemoryWrite(record.agentId, {
-      id: record.id,
+      id,
       kind: record.kind,
       content: record.content,
       createdAt: record.createdAt,
@@ -125,10 +156,16 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
     if (typeof record.lastAccessedAt !== "string" || Number.isNaN(Date.parse(record.lastAccessedAt))) {
       throw new MemoryValidationError(["record.lastAccessedAt must be a valid ISO date string"]);
     }
-    assertUniqueMemoryId(new Set(this.records.map((existingRecord) => existingRecord.id)), record.id);
+    if (record.invalidAt !== undefined && Number.isNaN(Date.parse(record.invalidAt))) {
+      throw new MemoryValidationError(["record.invalidAt must be a valid ISO date string"]);
+    }
+    if (record.supersededBy !== undefined && record.supersededBy.trim().length === 0) {
+      throw new MemoryValidationError(["record.supersededBy must be a non-empty string"]);
+    }
+    assertUniqueMemoryId(this.knownIds, id);
 
     this.records.push({
-      id: record.id,
+      id,
       agentId: record.agentId,
       kind: normalized.kind,
       content: normalized.content,
@@ -140,8 +177,11 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
       visibility: normalized.visibility,
       tags: [...normalized.tags],
       ...(normalized.emotion !== undefined ? { emotion: { ...normalized.emotion } } : {}),
+      ...(record.invalidAt !== undefined ? { invalidAt: record.invalidAt } : {}),
+      ...(record.supersededBy !== undefined ? { supersededBy: record.supersededBy } : {}),
       metadata: normalized.metadata,
     });
+    this.knownIds.add(id);
   }
 
   private generateId(): string {
@@ -149,7 +189,7 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
     do {
       id = `memory_${String(this.nextGeneratedId).padStart(4, "0")}`;
       this.nextGeneratedId += 1;
-    } while (this.records.some((record) => record.id === id));
+    } while (this.knownIds.has(id));
     return id;
   }
 }

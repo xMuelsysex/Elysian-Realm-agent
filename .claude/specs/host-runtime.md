@@ -6,7 +6,7 @@
 
 - `realm-data/realm.sqlite`（node:sqlite，`DatabaseSync`）存记忆/对话/情感/心情/tick 状态；`realm.json` 保持可手编 JSON（仅配置）。
 - **剧情脚本**：每 agent 可选 `plotScript: [{period, days?, events: [{type, target, intensity?}]}]`（`days` 为 0=周日..6=周六 星期过滤，缺省每天）；宿主 `tickIfPeriodChanged` 在 runTick 后按 period+星期自动投喂（与 tick 同闸门，重启安全）；缺省无脚本零行为变化。affinity 存储已取整（INTEGER 列），`clamped` 语义仅反映越界裁剪。**投喂的 plot 事件同时写经历记忆**（observation，PLOT_EVENT_LABELS 中文标签 + target 三模板，tags plot-event，metadata plotType/plotTarget）——角色可提及经历。
-- **情绪驱动例程**：routine 可选 `mood: low|neutral|high`（valence <-0.15 低 / >0.15 高）；`selectRoutineForPeriod(routines, period, affect)` 纯函数选择（mood 匹配 → 无偏好兜底 → 首条）；runTick 与 runNarratives 统一使用，行为随情绪变化。
+- **情绪与人格驱动例程**：routine 可选 `mood: low|neutral|high`（valence <-0.15 低 / >0.15 高）和 `personalityBias`（六维各为 -1..1，正值偏好高分、负值偏好低分）；`selectRoutineForPeriod(routines, period, affect, dimensions?)` 纯函数按 mood 匹配 → 候选人格得分 → 声明顺序选择，得分为 `Σ((value-50)/50 × bias)`；缺失维度按 50，平分不随机。runTick 与 runNarratives 统一使用。
 - 每次 mutation 单事务（`inTransaction`，BEGIN IMMEDIATE）；行级增量写，无全量快照。
 - **迁移**：旧 JSON（memories/affect/conversations/tick.json）在 DB 为空时一次性导入，文件原样保留（可手删）。
 - 旧 `persist()` 已删除；宿主 shutdown 不再全量写。
@@ -30,10 +30,37 @@
 - 实现链：`ConversationRunner.runStream?(request, onDelta, onReply?)`（可选，无流式能力时单 delta + onReply 回退）→ `piConversationReplyPort.generateReplyStream`（`agent.subscribe` 收 `text_delta`）→ `RealmHost.chatStream` → hostApi。
 - 非 stream 请求返回 JSON 兼容契约（页面自动回退）。
 
+## 主动联系（她先开口）
+
+- 决策全在 `src/host/proactive.ts` 的纯函数 `decideProactiveMessage`：**开关注入（per agent）→ 静默时段（本地 22–8，硬约束）→ 未回上限（2 条）→ 指数退避（tier 基础间隔 × min(2^未回, 4)）→ 素材检查**；注意 LLM 只在全部护栏通过后才被调用，失败/空回/OOC/超长都只是不发。
+- tier 基础间隔：`quiet` 4 天 / `normal` 1 天 / `talkative` 3 小时；realm.json 每 agent 可选 `proactive: {enabled, tier}`，缺省 = `resolveProactiveConfig`（enabled=true, normal），默认配置里两个角色显式写了（爱莉希雅 normal、梅比乌斯 quiet）。
+- 未回计数 = `created_at > 最后一次 participant turn` 的主动消息数；素材 = 上次主动发言之后写入且角色可见的 observation/reflection（所以没有真的过一天就不开口）。
+- 写入：主动消息同时是**一条 agent conversation turn**（下次回复知道她说过）+ 一条 `proactive_messages` 未读记录（退避的度量与页面徽标的数据源）；participant 发消息（走 `applyChatResponse`）时整批置为已读。
+- 接口：`GET /v1/host/proactive/<profileId>/<agentId>` → `{unread, recent, decision}`（带着「为什么发/为什么不发」）；`POST /v1/host/proactive/read`；`/v1/host/state` 摘要带 `proactiveUnread`；tick 报告带 `proactive` 计数（宿主日志一行）。页面：徽标「🌙 她先说 · N 条未回」+ 历史里她的发言上方「🌙 她先开口」标记，回复后两者同时清除。
+
+`POST /v1/host/new-conversation` `{profileId?, agentId}` → `{agentId, profileId?, cleared}`：**开始新的对话**——删除该档案该角色的 `conversations` 行（内存与库同步），返回被清空的轮数。记忆、好感度、心情、自我认知和剧情游标全部保留：对话记录只是活动上下文窗口，不是角色记得的事；清空后 `applyConversation` 从 seq 0 继续追加。
+
+## 记忆流边界（引擎诊断不进记忆流）
+
+- 确定性模板（step 的 plan 文本与确定性 reflection）在 `metadata.engineDiagnostic = true` 标记自己。
+- `RealmStateStore.applyMemoryWrites` / `applyTickMemories` 是**单一执法点**：带标记的写入被拒收并计入 `withheldDiagnosticCount()`（`stats.totals.withheldDiagnostics`），不做静默丢弃。
+- tick 报告带 `withheld` 与 `diagnostics`（模板原文，宿主日志 `tick diagnostic: ...` 输出），方便看见「今天她只跑了模板」。
+- **兜底即退化检查**：每个 tick 后，若某 agent 该 tick 没有任何角色可见的 narrative/reflection，写入 note（`produced no character-visible memory ...`）——不再让模板日看起来像安静的一天。
+
+## 记忆失效（失效优于删除）
+
+- `MemoryRecord.invalidAt` / `supersededBy`（表列 `invalid_at` / `superseded_by`，老库构造时 `ALTER TABLE` 补列）；`InMemoryMemoryStore.invalidate()` + `RealmStateStore.invalidateMemories()` 同步内存与库。
+- 失效即不可召回：`retrieveMemoryRecords` 跳过并记 `excluded: invalidated`；`isCharacterVisibleMemory` 对失效记录直接 false——所有角色可见投影（对话召回、叙事连续性、反思证据、self-concept provenance）自动跟随。
+- `listAgents().memoryCount` 只数存活记录；`stats` 分开暴露 `invalidatedMemories`。
+- 治理入口 `POST /v1/host/govern`：默认 `dryRun=true`；规则与常量见 `.claude/specs/memory-governance.md`。
+
+- **反思强制引用证据**：`reflectionValidation` 要求每条 insight 的 `evidenceMemoryIds` 非空且必须是本次提供的证据之一（未知 id 直接拒绝该条），宿主与 planner 两路均已覆盖（`simulationAgentReflection` / `memoryInvalidation` 测试）。
+
 ## admin 配置语义
 
 - 存储 key 按设计不回显；候选配置缺 apiKey 时**合并存储 key**（`withStoredApiKey`，保存+测试两路）——勿改成直接落盘无 key 配置。
 - env 固定（ELYSIAN_LLM_PROVIDER/MODEL）时保存返回 409 LLM_CONFIG_PINNED。
+- 认证后的 `GET /v1/admin/realm` 只读返回角色后台快照：六维属性、好感度、心情和最近 100 条记忆；属性不进入聊天端 `/v1/host/state`。
 
 ## 检索与情感
 
@@ -41,10 +68,14 @@
 - `emotionBias`/`weights.emotion`（默认 0 无偏）实现情绪一致性召回；`describeEvidenceEmotionalArc` 给反思 prompt 注入证据期情感轨迹（<2 条签名记忆不注入）。
 - **关系弧线**：`relationshipHistory(agentId, since?)` 查询亲和度轨迹；夜间反思注入当日关系弧线行（当天≥2 条且首末不同才注入，`Relationship arc today: ... moved from X to Y`）；对话请求带 `relationshipHistory`（近 20 条），prompt 注入 `Relationship trajectory` 行（≥2 条且首末不同）——角色在对话中感知关系演变。
 - **反思可见化**：`/v1/host/state` 摘要含 `latestReflection`（最新 kind=reflection 记忆）；聊天页空历史展示「🌙 她最近在想：「...」」（80 字符截断）。
+- **聊天页头像**：`src/host/avatarAssets.ts` 以稳定 `personaId` 为键内嵌 176×176 WebP data URI（官方角色缩略图**完整**缩图，艺术图 144×144 居中内缩，不裁剪），页面单次响应自带全部头像——无静态资源路由、无运行时文件读取、无新依赖。无图 persona 与用户侧回退「首字 + key 确定性取色圆牌」。气泡外层为 `.row`（承载头像与左右方向），`.bubble.agent` / `.bubble.user` 只负责底色与圆角；头像 2.75rem 圆形容器带描边环与底色；容器宽度 88rem。
+- **控件自身表面（三个页面统一）**：`select` / `input` / `textarea` / `button` / 页头链接一律 `background: color-mix(in srgb, currentColor 8%, transparent)` + `1px solid ... 35%`，hover 18%——透明底会让控件与页面底色（及原生对话框底色）融为一体，看起来不像控件。
+- **确认弹窗**：新对话的二次确认用页面内卡片（`#confirm`，`Canvas`/`CanvasText` 系统色 + 背板遮罩 + 红色主按钮），不用 `window.confirm`——原生对话框只画按钮文字、不画按钮表面，深色主题下按钮与对话框底色融为一体不可读。
+- **配色方案必须钉死并自绘页面底色（三个页面）**：`html { color-scheme: only light; background: #fff; color: #1a1a1a; }`。页面不自绘底色时会露宿主的白色窗口底，而 `color-scheme: light dark` 在宿主偏深色时把文字颜色解成白色——白底白字会同时出现于页面与 `<select>` 原生下拉弹层（`option` 文字跟 `select` 同色），主人环境下“解锁到场景”就是这么变成白底白字的。钉死 light + 自绘底色后页面、控件、原生下拉弹层的字色与底色总是匹配。
 
 ## 验证
 
 - `npm run verify`：npm test + verify:e2e 聚合全量验证（单元 + 帧级 E2E）；`ELYSIAN_CREDENTIALS_PATH=<real> bash scripts/run-e2e.sh` 切真实中转。
 - 浏览器验证（Playwright）：进程需跨工具调用存活——`setsid nohup ... & disown`；清理用 `fuser -k PORT`；`pkill -f` 模式会匹配自身 shell 命令行（自杀），用 `[.]` 或 fuser。
 
-- **记忆治理**：设计提案见 `.claude/specs/memory-governance.md`（未执行，删除类操作需主人确认）。
+- **记忆治理**：方案 A（记忆失效，不删除）已实现——`POST /v1/host/govern`，默认 `dryRun=true`（显式传 `false` 才真改）；方案 B（对话 500 turns 裁剪）与失效记录的物理清理仍未执行，属删除类操作，需主人确认；规则见 `.claude/specs/memory-governance.md`。

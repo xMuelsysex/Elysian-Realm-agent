@@ -220,7 +220,7 @@ function buildPlanMemoryWrite(
   return {
     id: sanitizeMemoryId(`memory_${stepId}_${perception.agentId}_plan`),
     kind: "plan",
-    content: `${perception.agentId} planned ${proposal.kind}: ${proposal.intent}`,
+    content: `我把今天的安排记下了：${proposal.intent}`,
     createdAt: now,
     importance: 4,
     sourceIds: [stepId],
@@ -233,6 +233,8 @@ function buildPlanMemoryWrite(
       locationId: proposal.locationId ?? perception.locationId,
       proposalKind: proposal.kind,
       planId: proposal.id,
+      // Template text: it documents the step, it is not a lived memory.
+      engineDiagnostic: true,
     },
   };
 }
@@ -343,12 +345,13 @@ function createDeterministicReflectionPlanner(
       const evidenceIds = input.evidence.map((memory) => memory.id);
       const plan = input.evidence.find((memory) => memory.kind === "plan");
       const importance = Math.min(9, Math.max(6, ...input.evidence.map((memory) => memory.importance + 1)));
+      const activity = plan?.content.replace(/^[^：:]+[：:]\s*/, "") ?? "最近的活动";
       return {
         source: "deterministic",
         reason: `bounded engine reflection over ${evidenceIds.length} memory record(s)`,
         insights: [
           {
-            content: `${perception.displayName} reflected on ${plan?.content ?? "recent memory evidence"} and kept the pattern available for future planning.`,
+            content: `我把${activity}留在今天的记忆里，之后再看看它会带来什么变化。`,
             evidenceMemoryIds: evidenceIds,
             importance,
             tags: [perception.agentId, perception.personaId, "reflection", perception.period, perception.locationId],
@@ -359,6 +362,8 @@ function createDeterministicReflectionPlanner(
               locationId: perception.locationId,
               triggerKind: input.trigger.kind,
               reflectionSource: "deterministic",
+              // Fixed template text, withheld from the memory stream by the host.
+              engineDiagnostic: true,
             },
           },
         ],

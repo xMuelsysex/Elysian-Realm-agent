@@ -11,7 +11,10 @@ set -u
 cd "$(dirname "$0")/.."
 
 export STUB_PORT="${STUB_PORT:-4330}"
-export E2E_HOST_PORT="${E2E_HOST_PORT:-4322}"
+if [ -z "${E2E_HOST_PORT:-}" ]; then
+  E2E_HOST_PORT="$(node --input-type=module -e 'import net from "node:net"; const server = net.createServer(); server.listen(0, "127.0.0.1", () => { console.log(server.address().port); server.close(); });')"
+fi
+export E2E_HOST_PORT
 
 node tests/e2e/llm-stub.mjs > /tmp/elysian-e2e-stub.log 2>&1 &
 STUB_PID=$!

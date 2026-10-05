@@ -7,11 +7,20 @@
 //
 // No pi imports here: the runner arrives via its port interface.
 
-import type { ConversationRunner } from "../conversation/conversationRunner.js";
+import {
+  buildConversationMemoryWrites,
+  CONVERSATION_MEMORY_IMPORTANCE,
+  type ConversationRunner,
+} from "../conversation/conversationRunner.js";
 import type { LlmPort } from "../ports/ports.js";
 import {
   REALM_CONVERSATION_SCHEMA_VERSION,
+  resolvePersonalityDimensions,
+  type PersonalityDimensionKey,
+  type RealmConversationRequestV1,
+  type RealmConversationResponseV1,
   type RealmConversationTurnV1,
+  type RealmPersonalityDimensionsV1,
 } from "../service/realmConversationV1.js";
 import {
   REALM_AGENT_STEP_SCHEMA_VERSION,
@@ -19,6 +28,7 @@ import {
   type RealmRoutinePeriodV1,
 } from "../service/realmStepV1.js";
 import { executeRealmAgentStepV1 } from "../service/realmStepExecutor.js";
+import type { MemoryRecord } from "../memory/memoryRecords.js";
 import { runReflection } from "../reflection/reflectionPlanner.js";
 import { createLlmReflectionPlanner } from "../reflection/llmReflectionPlanner.js";
 import type { AffectState, AgentMood, PlotEvent, PlotEventTarget, PlotEventType } from "../affect/affectRecords.js";
@@ -30,19 +40,63 @@ import {
   CONVERSATION_EMOTION_BLEND_RATE,
   createInitialAffectState,
 } from "../affect/plotRules.js";
-import { PLOT_EVENT_LABELS } from "../affect/affectRecords.js";
+import { PLOT_EVENT_LABELS, PLOT_EVENT_TYPES } from "../affect/affectRecords.js";
 import type { RealmAffectProposalV1 } from "../service/realmStepV1.js";
 import { runLifeNarrative } from "./lifeNarrative.js";
-import { detectOocLeak } from "../conversation/oocGuard.js";
+import {
+  detectOocLeak,
+  isCharacterVisibleMemory,
+  isCharacterVisibleMood,
+  isCharacterVisibleParticipantMessage,
+} from "../conversation/oocGuard.js";
 import type { RealmRoutineConfig, RealmStateStore, RealmStoreStats, RealmPersonaConfig } from "./realmState.js";
-import { SELF_CONCEPT_AUDIT_SCHEMA_VERSION } from "../selfConcept/selfConceptRecords.js";
+import {
+  isEngineDiagnosticRecord,
+  isEngineTemplateRecord,
+  MEMORY_RETIRE_MIN_IMPORTANCE,
+  MEMORY_STALE_DAYS,
+} from "./realmState.js";
+import { RealmProfileManager, type RealmProfileManagerInput, type RealmProfileSummary } from "./realmProfiles.js";
+import {
+  SELF_CONCEPT_AUDIT_SCHEMA_VERSION,
+  type SelfConceptProposalV1,
+} from "../selfConcept/selfConceptRecords.js";
 import { ELYSIAN_REALM_CANON } from "../lore/elysianRealmCanon.js";
+import { ELYSIAN_REALM_DIALOGUE } from "../lore/elysianRealmDialogue.js";
 import { retrieveLoreEntries } from "../lore/loreRetrieval.js";
+import { retrieveLoreDialogue } from "../lore/loreDialogueRetrieval.js";
+import { renderLoreDialogueContext } from "../lore/loreDialoguePrompt.js";
+import { dialogueLinesForSpeaker, dialogueSpeakerAliases } from "../lore/loreDialogueRecords.js";
+import {
+  generateStoryOverview,
+  STORY_OVERVIEW_SCENE_LIMIT,
+  type StoryOverviewSourceScene,
+} from "./storyOverview.js";
+import {
+  personalityEventResponseMultiplier,
+  personalityRoutineScore,
+} from "../personality/personalityRules.js";
 import {
   DEFAULT_LORE_RETRIEVAL_TOP_K,
   validateLoreEntries,
   type LoreEntryV1,
 } from "../lore/loreRecords.js";
+import {
+  validateLoreDialogueCatalog,
+  type LoreDialogueCatalogV1,
+  type LoreDialogueLineV1,
+  type LoreDialogueRetrievalHitV1,
+} from "../lore/loreDialogueRecords.js";
+import {
+  decideProactiveMessage,
+  resolveProactiveConfig,
+  runProactiveMessage,
+  PROACTIVE_MATERIAL_LIMIT,
+  PROACTIVE_RECENT_LIMIT,
+  type ProactiveDecision,
+  type ProactiveMessageInput,
+} from "./proactive.js";
+import type { ProactiveMessageV1 } from "./realmState.js";
 
 const CHAT_HISTORY_WINDOW = 20;
 const RELATIONSHIP_HISTORY_WINDOW = 20;
@@ -69,8 +123,93 @@ export interface RealmAgentSummary {
   mood?: AgentMood;
   affect?: AffectState;
   memoryCount: number;
+  /** Self-initiated messages the participant has not answered yet. */
+  proactiveUnread: number;
   /** The agent's most recent nightly reflection, when one exists. */
   latestReflection?: string;
+}
+
+/** Read-only data shown by the authenticated admin dashboard. */
+export interface RealmAgentAdminView extends RealmAgentSummary {
+  personalityDimensions: Record<PersonalityDimensionKey, number>;
+  memories: readonly MemoryRecord<RealmMemoryMetadataV1>[];
+}
+
+export interface RealmProfileAdminView extends RealmProfileSummary {
+  agents: readonly RealmAgentAdminView[];
+}
+
+export interface RealmStorySceneAdminView {
+  id: string;
+  order: number;
+  title: string;
+  chapterId: string;
+  sourceUrl: string;
+  available: boolean;
+}
+
+export interface RealmStoryAdminView {
+  cursor: number;
+  updatedAt: string;
+  totalScenes: number;
+  source: string;
+  chapters: readonly {
+    id: string;
+    title: string;
+    sceneIds: readonly string[];
+  }[];
+  scenes: readonly RealmStorySceneAdminView[];
+  diagnostics: readonly { sourceUrl: string; status: number; message: string }[];
+}
+
+export interface RealmStoryOverviewScene {
+  id: string;
+  order: number;
+  title: string;
+  chapterTitle: string;
+  summary: string;
+}
+
+export interface RealmStoryOverview {
+  status: "ready" | "empty";
+  profileId: string;
+  agentId: string;
+  cursor: number;
+  message?: string;
+  currentScene?: Pick<RealmStoryOverviewScene, "id" | "order" | "title" | "chapterTitle">;
+  recentScenes: readonly RealmStoryOverviewScene[];
+  overview?: string;
+  questions: readonly string[];
+}
+
+/** One exact transcript fragment supplied to a conversation request. */
+export interface RealmStoryInspectionHit {
+  scene: {
+    id: string;
+    arcId: string;
+    chapterId: string;
+    chapterTitle: string;
+    order: number;
+    title: string;
+    sourceUrl: string;
+  };
+  score: number;
+  lines: readonly Pick<LoreDialogueLineV1, "id" | "stageId" | "sourceIndex" | "kind" | "speaker" | "text">[];
+}
+
+/** Read-only trace used by the local story test interface. */
+export interface RealmConversationInspection {
+  profileId: string;
+  conversationId: string;
+  now: string;
+  agent: { agentId: string; personaId: string; displayName: string };
+  participant: { participantId: string; displayName: string; profile?: string };
+  message: string;
+  historyTurns: number;
+  memoryCount: number;
+  storyCursor: number;
+  storyContext: readonly RealmStoryInspectionHit[];
+  storyPrompt: string;
 }
 
 export interface RealmHostOptions {
@@ -80,6 +219,17 @@ export interface RealmHostOptions {
   llm?: () => LlmPort | undefined;
   /** Curated read-only world canon; defaults to the bundled Elysian Realm canon. */
   lore?: readonly LoreEntryV1[];
+  /** Local full transcript snapshot; defaults to the bundled BH3Text snapshot. */
+  loreDialogue?: LoreDialogueCatalogV1;
+}
+
+/** Outcome of a governance pass: what was eligible, and what actually changed. */
+export interface RealmGovernReport {
+  profileId: string;
+  dryRun: boolean;
+  at: string;
+  candidates: { stale: number; engineTemplates: number };
+  invalidated: { stale: number; engineTemplates: number };
 }
 
 export interface RealmTickReport {
@@ -87,6 +237,12 @@ export interface RealmTickReport {
   added: number;
   narratives: number;
   reflections: number;
+  /** Self-initiated messages the tick sent out. */
+  proactive: number;
+  /** Engine diagnostic records the tick tried to write and the stream refused. */
+  withheld: number;
+  /** The withheld template text itself, for logs and diagnostics surfaces. */
+  diagnostics: readonly string[];
   /** Non-fatal problems (narrative/reflection failures), for logging. */
   notes: readonly string[];
 }
@@ -98,12 +254,44 @@ export function periodOf(hour: number): RealmRoutinePeriodV1 {
   return "night";
 }
 
+/**
+ * Keep legacy OOC assistant turns out of the next model context while leaving
+ * the stored diagnostic history available to the host and admin views.
+ */
+function characterVisibleHistory(
+  state: RealmStateStore,
+  agentId: string,
+): readonly RealmConversationTurnV1[] {
+  return state.historyFor(agentId, CHAT_HISTORY_WINDOW).filter((turn) => (
+    turn.role === "agent"
+      ? detectOocLeak(turn.content) === undefined
+      : isCharacterVisibleParticipantMessage(turn.content)
+  ));
+}
+
 /** Append an OOC-leak annotation to the analysis reason when detected. */
-function annotatedReason(reason: string | undefined, reply: string): string {
+function annotatedReason(
+  reason: string | undefined,
+  reply: string,
+  mood?: { mood: string; intensity: number },
+): string {
+  const notes: string[] = [];
   const leak = detectOocLeak(reply);
-  if (leak === undefined) return reason ?? "";
+  if (leak !== undefined) notes.push(`ooc-leak: ${leak}`);
+  if (mood !== undefined && !isCharacterVisibleMood(mood.mood)) {
+    notes.push("mood quarantined: unsafe or overlong text");
+  }
+  if (notes.length === 0) return reason ?? "";
   const base = reason && reason.trim().length > 0 ? reason : "no analysis detail";
-  return `${base}; ooc-leak: ${leak}`;
+  return `${base}; ${notes.join("; ")}`;
+}
+
+function detectSelfConceptOocLeak(proposal: SelfConceptProposalV1): string | undefined {
+  for (const text of [proposal.summary, ...proposal.beliefs.map((belief) => belief.statement)]) {
+    const leak = detectOocLeak(text);
+    if (leak !== undefined) return leak;
+  }
+  return undefined;
 }
 
 /** The character's temperament baseline, or the engine default when absent. */
@@ -114,14 +302,24 @@ function personaBaseline(agent: RealmPersonaConfig): { valence: number; arousal:
   return { ...AFFECT_DEFAULT_BASELINE };
 }
 
-/** The character's per-event response multipliers, or undefined when absent. */
+/** 返回显式事件倍率与六维人格固定倍率的合成结果。 */
 function personaAffectModifiers(
   agent: RealmPersonaConfig,
 ): Partial<Record<PlotEventType, number>> | undefined {
-  if (typeof agent.persona === "object" && agent.persona.affectModifiers !== undefined) {
-    return { ...agent.persona.affectModifiers };
+  if (typeof agent.persona !== "object") {
+    return undefined;
   }
-  return undefined;
+  const explicit = agent.persona.affectModifiers;
+  const dimensions = agent.persona.personalityDimensions;
+  if (explicit === undefined && dimensions === undefined) {
+    return undefined;
+  }
+  return Object.fromEntries(
+    PLOT_EVENT_TYPES.map((type) => [
+      type,
+      (explicit?.[type] ?? 1) * personalityEventResponseMultiplier(type, dimensions),
+    ]),
+  ) as Partial<Record<PlotEventType, number>>;
 }
 
 /** Mood band from an affect snapshot's valence; neutral when absent. */
@@ -132,52 +330,224 @@ export function moodBand(affect: AffectState | undefined): "low" | "neutral" | "
   return "neutral";
 }
 
-/**
- * Pick the routine for a period: first candidate whose mood preference
- * matches the current affect band, else the first fallback in order.
- * Deterministic; legacy single-routine configs are unchanged.
- */
+/** 按情绪优先、人格偏好次之、声明顺序兜底选择例程。 */
 export function selectRoutineForPeriod(
   routines: readonly RealmRoutineConfig[],
   period: RealmRoutinePeriodV1,
   affect: AffectState | undefined,
+  dimensions?: RealmPersonalityDimensionsV1,
 ): RealmRoutineConfig | undefined {
   const candidates = routines.filter((entry) => entry.period === period);
   if (candidates.length === 0) {
     return undefined;
   }
   const band = moodBand(affect);
-  return (
-    candidates.find((entry) => entry.mood === band) ??
-    candidates.find((entry) => entry.mood === undefined) ??
-    candidates[0]
-  );
+  const moodMatches = candidates.filter((entry) => entry.mood === band);
+  const fallbacks = candidates.filter((entry) => entry.mood === undefined);
+  const pool = moodMatches.length > 0
+    ? moodMatches
+    : fallbacks.length > 0
+      ? fallbacks
+      : candidates;
+  let selected = pool[0];
+  let selectedScore = personalityRoutineScore(dimensions, selected.personalityBias);
+  for (const candidate of pool.slice(1)) {
+    const score = personalityRoutineScore(dimensions, candidate.personalityBias);
+    if (score > selectedScore) {
+      selected = candidate;
+      selectedScore = score;
+    }
+  }
+  return selected;
 }
 
 export class RealmHost {
   private readonly state: RealmStateStore;
+  private readonly profiles?: RealmProfileManager;
   private readonly runner: () => ConversationRunner | undefined;
   private readonly llm: () => LlmPort | undefined;
   private readonly now: () => Date;
   private readonly lore: readonly LoreEntryV1[];
+  private readonly loreDialogue: LoreDialogueCatalogV1;
   private chatCounter = 0;
   private eventCounter = 0;
 
   constructor(
-    state: RealmStateStore,
+    state: RealmStateStore | RealmProfileManager,
     runner: () => ConversationRunner | undefined,
     options: RealmHostOptions = {},
   ) {
-    this.state = state;
+    if (state instanceof RealmProfileManager) {
+      this.profiles = state;
+      this.state = state.stateFor();
+    } else {
+      this.state = state;
+    }
     this.runner = runner;
     this.llm = options.llm ?? (() => undefined);
     this.now = options.now ?? (() => new Date());
     this.lore = validateLoreEntries(options.lore ?? ELYSIAN_REALM_CANON);
+    this.loreDialogue = validateLoreDialogueCatalog(options.loreDialogue ?? ELYSIAN_REALM_DIALOGUE);
   }
 
-  listAgents(): RealmAgentSummary[] {
-    return this.state.config.agents.map((agent) => {
-      const memories = this.state.memoriesFor(agent.agentId);
+  private stateFor(profileId?: string): RealmStateStore {
+    if (this.profiles !== undefined) {
+      return this.profiles.stateFor(profileId);
+    }
+    if (profileId !== undefined && profileId !== this.state.config.user.participantId) {
+      throw new Error(`unknown profileId: ${profileId}`);
+    }
+    return this.state;
+  }
+
+  listProfiles(): RealmProfileSummary[] {
+    if (this.profiles !== undefined) {
+      return this.profiles.listProfiles();
+    }
+    return [{
+      profileId: this.state.config.user.participantId,
+      displayName: this.state.config.user.displayName,
+      ...(this.state.config.user.profile !== undefined ? { profile: this.state.config.user.profile } : {}),
+      storyCursor: this.state.storyProgress().cursor,
+    }];
+  }
+
+  createProfile(input: RealmProfileManagerInput): RealmProfileSummary {
+    if (this.profiles === undefined) {
+      throw new Error("profile management is not enabled");
+    }
+    return this.profiles.createProfile(input);
+  }
+
+  updateProfile(profileId: string, input: { displayName: string; profile?: string }): RealmProfileSummary {
+    if (this.profiles === undefined) {
+      throw new Error("profile management is not enabled");
+    }
+    return this.profiles.updateProfile(profileId, input);
+  }
+
+  storyProgress(profileId?: string): RealmStoryAdminView {
+    const state = this.stateFor(profileId);
+    return {
+      ...state.storyProgress(),
+      totalScenes: this.loreDialogue.scenes.length,
+      source: this.loreDialogue.source,
+      chapters: this.loreDialogue.chapters.map((chapter) => ({
+        id: chapter.id,
+        title: chapter.title,
+        sceneIds: chapter.sceneIds,
+      })),
+      scenes: this.loreDialogue.scenes.map(({ id, order, title, chapterId, sourceUrl, available }) => ({
+        id,
+        order,
+        title,
+        chapterId,
+        sourceUrl,
+        available,
+      })),
+      diagnostics: this.loreDialogue.diagnostics ?? [],
+    };
+  }
+
+  async storyOverview(agentId: string, profileId?: string): Promise<RealmStoryOverview> {
+    const state = this.stateFor(profileId);
+    const agent = state.agent(agentId);
+    const resolvedProfileId = state.config.user.participantId;
+    const cursor = state.storyProgress().cursor;
+    const empty = (message: string): RealmStoryOverview => ({
+      status: "empty",
+      profileId: resolvedProfileId,
+      agentId,
+      cursor,
+      message,
+      recentScenes: [],
+      questions: [],
+    });
+
+    if (cursor <= 0) {
+      return empty("当前剧情尚未解锁");
+    }
+
+    const aliases = dialogueSpeakerAliases(agent.displayName, agent.personaId);
+    const sourceScenes = this.loreDialogue.scenes
+      .filter((scene) => scene.available && scene.order < cursor)
+      .sort((left, right) => right.order - left.order)
+      .map((scene): StoryOverviewSourceScene => ({
+        sceneId: scene.id,
+        order: scene.order,
+        title: scene.title,
+        chapterTitle: this.loreDialogue.chapters.find((chapter) => chapter.id === scene.chapterId)?.title ?? scene.chapterId,
+        lines: dialogueLinesForSpeaker(scene, aliases),
+      }))
+      .filter((scene) => scene.lines.length > 0);
+    const currentScene = sourceScenes.find((scene) => scene.order === cursor - 1);
+    if (currentScene === undefined) {
+      return empty("当前剧情暂无该角色可见原文");
+    }
+
+    const recentScenes = sourceScenes.slice(0, STORY_OVERVIEW_SCENE_LIMIT).reverse();
+    const llm = this.llm();
+    if (llm === undefined) {
+      throw new Error("no conversation llm configured; open /admin to set one up before generating the story overview");
+    }
+    const generated = await generateStoryOverview(llm, {
+      characterName: agent.displayName,
+      scenes: recentScenes,
+    });
+    const sceneById = new Map(recentScenes.map((scene) => [scene.sceneId, scene]));
+
+    return {
+      status: "ready",
+      profileId: resolvedProfileId,
+      agentId,
+      cursor,
+      currentScene: {
+        id: currentScene.sceneId,
+        order: currentScene.order,
+        title: currentScene.title,
+        chapterTitle: currentScene.chapterTitle,
+      },
+      recentScenes: generated.recaps.map((recap) => {
+        const scene = sceneById.get(recap.sceneId);
+        if (scene === undefined) {
+          throw new Error(`story overview returned unknown scene: ${recap.sceneId}`);
+        }
+        return {
+          id: scene.sceneId,
+          order: scene.order,
+          title: scene.title,
+          chapterTitle: scene.chapterTitle,
+          summary: recap.text,
+        };
+      }),
+      overview: generated.overview,
+      questions: generated.questions,
+    };
+  }
+
+  setStoryCursor(profileId: string | undefined, cursor: number): RealmStoryAdminView {
+    if (!Number.isInteger(cursor) || cursor < 0 || cursor > this.loreDialogue.scenes.length) {
+      throw new Error(`story cursor must be an integer from 0 to ${this.loreDialogue.scenes.length}`);
+    }
+    const state = this.stateFor(profileId);
+    const current = state.storyProgress().cursor;
+    const at = this.now().toISOString();
+    if (cursor !== current) {
+      state.saveStoryCheckpoint(current);
+      if (cursor < current) {
+        state.restoreStoryCheckpoint(cursor, at);
+      } else {
+        state.setStoryCursor(cursor, at);
+      }
+      state.clearStoryCheckpointsAfter(cursor);
+    }
+    return this.storyProgress(profileId);
+  }
+
+  listAgents(profileId?: string): RealmAgentSummary[] {
+    const state = this.stateFor(profileId);
+    return state.config.agents.map((agent) => {
+      const memories = state.memoriesFor(agent.agentId);
       const latestReflection = memories
         .filter((record) => record.kind === "reflection")
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.content;
@@ -185,37 +555,191 @@ export class RealmHost {
         agentId: agent.agentId,
         displayName: agent.displayName,
         personaId: agent.personaId,
-        affinity: this.state.relationship(agent.agentId)?.affinity ?? 0,
-        mood: this.state.mood(agent.agentId),
-        affect: this.state.affectState(agent.agentId),
-        memoryCount: memories.length,
+        affinity: state.relationship(agent.agentId)?.affinity ?? 0,
+        mood: state.mood(agent.agentId),
+        affect: state.affectState(agent.agentId),
+        // Retired memories stay stored as provenance but are not memories she has.
+        memoryCount: memories.filter((record) => record.invalidAt === undefined).length,
+        proactiveUnread: state.unreadProactiveMessages(agent.agentId).length,
         ...(latestReflection !== undefined ? { latestReflection } : {}),
       };
     });
   }
 
-  user(): { participantId: string; displayName: string } {
-    return this.state.config.user;
+  adminView(profileId?: string): RealmAgentAdminView[] {
+    const state = this.stateFor(profileId);
+    const summaries = this.listAgents(profileId);
+    return summaries.map((summary) => {
+      const agent = state.agent(summary.agentId);
+      const memories = state
+        .memoriesFor(summary.agentId)
+        .slice()
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 100);
+      return {
+        ...summary,
+        personalityDimensions: resolvePersonalityDimensions(
+          typeof agent.persona === "object" ? agent.persona.personalityDimensions : undefined,
+        ),
+        memories,
+      };
+    });
+  }
+
+  user(profileId?: string): { participantId: string; displayName: string; profile?: string } {
+    return { ...this.stateFor(profileId).config.user };
   }
 
   /** Non-destructive store statistics for growth diagnostics. */
-  stats(): RealmStoreStats {
-    return this.state.stats(this.now().toISOString());
+  stats(profileId?: string): RealmStoreStats {
+    return this.stateFor(profileId).stats(this.now().toISOString());
   }
 
-  history(agentId: string, limit = 50): readonly RealmConversationTurnV1[] {
-    this.state.agent(agentId);
-    return this.state.historyFor(agentId, limit);
+  history(agentId: string, limit = 50, profileId?: string): readonly RealmConversationTurnV1[] {
+    const state = this.stateFor(profileId);
+    state.agent(agentId);
+    return state.historyFor(agentId, limit);
   }
 
-  async chat(agentId: string, content: string): Promise<RealmChatResult> {
+  /**
+   * Memory governance: retire long-unused low-importance memories and the
+   * engine's own template records. Invalidation, never deletion — the rows stay
+   * as provenance and the report says what changed. Dry run by default.
+   */
+  govern(options: { dryRun: boolean; profileId?: string }): RealmGovernReport {
+    const state = this.stateFor(options.profileId);
+    const at = this.now().toISOString();
+    const staleBefore = new Date(Date.parse(at) - MEMORY_STALE_DAYS * 86_400_000).toISOString();
+    const candidates = { stale: 0, engineTemplates: 0 };
+    const invalidated = { stale: 0, engineTemplates: 0 };
+    for (const agent of state.config.agents) {
+      const staleIds: string[] = [];
+      const templateIds: string[] = [];
+      for (const record of state.memoriesFor(agent.agentId)) {
+        if (record.invalidAt !== undefined) {
+          continue;
+        }
+        if (isEngineTemplateRecord(record)) {
+          templateIds.push(record.id);
+          continue;
+        }
+        if (record.importance < MEMORY_RETIRE_MIN_IMPORTANCE && record.lastAccessedAt < staleBefore) {
+          staleIds.push(record.id);
+        }
+      }
+      candidates.stale += staleIds.length;
+      candidates.engineTemplates += templateIds.length;
+      if (options.dryRun) {
+        continue;
+      }
+      invalidated.stale += state.invalidateMemories(agent.agentId, staleIds, at);
+      invalidated.engineTemplates += state.invalidateMemories(agent.agentId, templateIds, at);
+    }
+    return {
+      profileId: state.config.user.participantId,
+      dryRun: options.dryRun,
+      at,
+      candidates,
+      invalidated,
+    };
+  }
+
+  /**
+   * Start a new conversation with one agent: clear the visible transcript so the
+   * next message opens a fresh context. Long-term state (memories, affect,
+   * mood, relationship, story progress) is untouched.
+   */
+  newConversation(agentId: string, profileId?: string): number {
+    const state = this.stateFor(profileId);
+    state.agent(agentId);
+    return state.clearConversation(agentId);
+  }
+
+  /** Build a read-only trace of the story excerpts selected for one message. */
+  inspectConversation(agentId: string, content: string, profileId?: string): RealmConversationInspection {
+    const state = this.stateFor(profileId);
+    const agent = state.agent(agentId);
+    const trimmed = content.trim();
+    if (trimmed.length === 0) {
+      throw new Error("message content must not be empty");
+    }
+    const now = this.now().toISOString();
+    const history = characterVisibleHistory(state, agentId);
+    const storyContext = this.storyContextFor(
+      state,
+      agent,
+      [...history.map((turn) => turn.content), trimmed].join("\\n"),
+    );
+    const storyContextForInspection = storyContext.map((hit) => {
+      const chapter = this.loreDialogue.chapters.find((entry) => entry.id === hit.scene.chapterId);
+      return {
+        scene: {
+          id: hit.scene.id,
+          arcId: hit.scene.arcId,
+          chapterId: hit.scene.chapterId,
+          chapterTitle: chapter?.title ?? hit.scene.chapterId,
+          order: hit.scene.order,
+          title: hit.scene.title,
+          sourceUrl: hit.scene.sourceUrl,
+        },
+        score: hit.score,
+        lines: hit.lines.map((line) => ({
+          id: line.id,
+          stageId: line.stageId,
+          sourceIndex: line.sourceIndex,
+          kind: line.kind,
+          ...(line.speaker !== undefined ? { speaker: line.speaker } : {}),
+          text: line.text,
+        })),
+      };
+    });
+    return {
+      profileId: state.config.user.participantId,
+      conversationId: `chat_${state.config.user.participantId}_${agentId}`,
+      now,
+      agent: { agentId: agent.agentId, personaId: agent.personaId, displayName: agent.displayName },
+      participant: state.config.user,
+      message: trimmed,
+      historyTurns: history.length,
+      memoryCount: state.memoriesFor(agentId).length,
+      storyCursor: state.storyProgress().cursor,
+      storyContext: storyContextForInspection,
+      storyPrompt: renderLoreDialogueContext(
+        storyContext,
+        undefined,
+        dialogueSpeakerAliases(agent.displayName, agent.personaId),
+      ) ?? "",
+    };
+  }
+
+  private storyContextFor(
+    state: RealmStateStore,
+    agent: RealmPersonaConfig,
+    text: string,
+  ): readonly LoreDialogueRetrievalHitV1[] {
+    return retrieveLoreDialogue(this.loreDialogue, {
+      cursor: state.storyProgress().cursor,
+      speakerAliases: dialogueSpeakerAliases(agent.displayName, agent.personaId),
+      text,
+    }).hits;
+  }
+
+  private availableSummaryLore(): readonly LoreEntryV1[] {
+    // The imported dialogue catalog is the staged canon. Keeping the older
+    // unscoped summaries out of model requests prevents future spoilers.
+    return this.loreDialogue.scenes.length === 0 ? this.lore : [];
+  }
+
+  async chat(agentId: string, content: string, profileId?: string): Promise<RealmChatResult> {
     const runner = this.runner();
     if (!runner) {
       throw new Error(
         "no conversation llm configured; open /admin to set one up before chatting",
       );
     }
-    const agent = this.state.agent(agentId);
+    const state = this.stateFor(profileId);
+    const agent = state.agent(agentId);
+    const storyGeneration = state.storyGeneration();
     const trimmed = content.trim();
     if (trimmed.length === 0) {
       throw new Error("message content must not be empty");
@@ -224,10 +748,11 @@ export class RealmHost {
     const now = this.now().toISOString();
     this.chatCounter += 1;
     const messageId = `msg_${this.now().getTime()}_${this.chatCounter}`;
+    const history = characterVisibleHistory(state, agentId);
 
-    const response = await runner.run({
+    const request: RealmConversationRequestV1 = {
       schemaVersion: REALM_CONVERSATION_SCHEMA_VERSION,
-      conversationId: `chat_${agentId}`,
+      conversationId: `chat_${profileId ?? this.state.config.user.participantId}_${agentId}`,
       now,
       agent: {
         agentId: agent.agentId,
@@ -235,31 +760,31 @@ export class RealmHost {
         displayName: agent.displayName,
         persona: agent.persona,
       },
-      participant: this.state.config.user,
-      memories: this.state.memoriesFor(agentId),
-      relationship: this.state.relationship(agentId),
-      mood: this.state.mood(agentId),
-      affect: this.state.affectState(agentId),
-      selfConcept: this.state.getSelfConceptSnapshot(agentId),
-      lore: this.lore,
-      history: this.state.historyFor(agentId, CHAT_HISTORY_WINDOW),
+      participant: state.config.user,
+      memories: state.memoriesFor(agentId),
+      relationship: state.relationship(agentId),
+      relationshipHistory: state.relationshipHistory(agentId).slice(-RELATIONSHIP_HISTORY_WINDOW),
+      mood: state.mood(agentId),
+      affect: state.affectState(agentId),
+      selfConcept: state.getSelfConceptSnapshot(agentId),
+      lore: this.availableSummaryLore(),
+      storyContext: this.storyContextFor(
+        state,
+        agent,
+        [...history.map((turn) => turn.content), trimmed].join("\n"),
+      ),
+      history,
       message: { messageId, content: trimmed },
-    });
+    };
+    const response = await runner.run(request);
 
-    const applied = this.state.applyConversation(
-      agentId,
-      {
-        turns: [
-          { role: "participant", content: trimmed, at: now },
-          { role: "agent", content: response.reply.content, at: now },
-        ],
-        memoryWrites: response.memoryWrites,
-        affinityDelta: response.affect.affinityDelta,
-        mood: response.affect.mood,
-      },
+    state.assertStoryGeneration(storyGeneration);
+    const { applied } = this.applyChatResponse(
+      state,
+      request,
+      response,
       now,
     );
-    this.applyConversationEmotion(agentId, response.affect.emotion, now);
 
     return {
       agentId,
@@ -268,7 +793,7 @@ export class RealmHost {
       affinity: applied.affinity,
       mood: applied.mood,
       analysis: response.affect.analysis,
-      analysisReason: annotatedReason(response.affect.reason, response.reply.content),
+      analysisReason: annotatedReason(response.affect.reason, response.reply.content, response.affect.mood),
     };
   }
 
@@ -282,6 +807,7 @@ export class RealmHost {
     content: string,
     onDelta: (text: string) => void,
     onReply?: (text: string) => void,
+    profileId?: string,
   ): Promise<RealmChatResult> {
     const runner = this.runner();
     if (!runner) {
@@ -289,7 +815,9 @@ export class RealmHost {
         "no conversation llm configured; open /admin to set one up before chatting",
       );
     }
-    const agent = this.state.agent(agentId);
+    const state = this.stateFor(profileId);
+    const agent = state.agent(agentId);
+    const storyGeneration = state.storyGeneration();
     const trimmed = content.trim();
     if (trimmed.length === 0) {
       throw new Error("message content must not be empty");
@@ -298,10 +826,11 @@ export class RealmHost {
     const now = this.now().toISOString();
     this.chatCounter += 1;
     const messageId = `msg_${this.now().getTime()}_${this.chatCounter}`;
+    const history = characterVisibleHistory(state, agentId);
 
-    const request = {
+    const request: RealmConversationRequestV1 = {
       schemaVersion: REALM_CONVERSATION_SCHEMA_VERSION,
-      conversationId: `chat_${agentId}`,
+      conversationId: `chat_${profileId ?? this.state.config.user.participantId}_${agentId}`,
       now,
       agent: {
         agentId: agent.agentId,
@@ -309,40 +838,44 @@ export class RealmHost {
         displayName: agent.displayName,
         persona: agent.persona,
       },
-      participant: this.state.config.user,
-      memories: this.state.memoriesFor(agentId),
-      relationship: this.state.relationship(agentId),
-      relationshipHistory: this.state.relationshipHistory(agentId).slice(-RELATIONSHIP_HISTORY_WINDOW),
-      mood: this.state.mood(agentId),
-      affect: this.state.affectState(agentId),
-      selfConcept: this.state.getSelfConceptSnapshot(agentId),
-      lore: this.lore,
-      history: this.state.historyFor(agentId, CHAT_HISTORY_WINDOW),
+      participant: state.config.user,
+      memories: state.memoriesFor(agentId),
+      relationship: state.relationship(agentId),
+      relationshipHistory: state.relationshipHistory(agentId).slice(-RELATIONSHIP_HISTORY_WINDOW),
+      mood: state.mood(agentId),
+      affect: state.affectState(agentId),
+      selfConcept: state.getSelfConceptSnapshot(agentId),
+      lore: this.availableSummaryLore(),
+      storyContext: this.storyContextFor(
+        state,
+        agent,
+        [...history.map((turn) => turn.content), trimmed].join("\n"),
+      ),
+      history,
       message: { messageId, content: trimmed },
     };
 
+    const onReplyForGeneration = onReply === undefined
+      ? undefined
+      : (reply: string) => {
+          state.assertStoryGeneration(storyGeneration);
+          onReply(reply);
+        };
     const response = runner.runStream
-      ? await runner.runStream(request, onDelta, onReply)
+      ? await runner.runStream(request, onDelta, onReplyForGeneration)
       : await runner.run(request).then((result) => {
           onDelta(result.reply.content);
-          onReply?.(result.reply.content);
+          onReplyForGeneration?.(result.reply.content);
           return result;
         });
 
-    const applied = this.state.applyConversation(
-      agentId,
-      {
-        turns: [
-          { role: "participant", content: trimmed, at: now },
-          { role: "agent", content: response.reply.content, at: now },
-        ],
-        memoryWrites: response.memoryWrites,
-        affinityDelta: response.affect.affinityDelta,
-        mood: response.affect.mood,
-      },
+    state.assertStoryGeneration(storyGeneration);
+    const { applied } = this.applyChatResponse(
+      state,
+      request,
+      response,
       now,
     );
-    this.applyConversationEmotion(agentId, response.affect.emotion, now);
 
     return {
       agentId,
@@ -351,8 +884,55 @@ export class RealmHost {
       affinity: applied.affinity,
       mood: applied.mood,
       analysis: response.affect.analysis,
-      analysisReason: annotatedReason(response.affect.reason, response.reply.content),
+      analysisReason: annotatedReason(response.affect.reason, response.reply.content, response.affect.mood),
     };
+  }
+
+  /**
+   * Apply a reply only after checking the generated text for a persona leak.
+   * A leaked reply remains visible to the caller for diagnosis, while its
+   * generated memory, affect, relationship delta, and history turn are kept
+   * out of the durable loop.
+   */
+  private applyChatResponse(
+    state: RealmStateStore,
+    request: RealmConversationRequestV1,
+    response: RealmConversationResponseV1,
+    now: string,
+  ): { applied: ReturnType<RealmStateStore["applyConversation"]>; leak?: string } {
+    const leak = detectOocLeak(response.reply.content);
+    const turns: RealmConversationTurnV1[] = leak === undefined
+      ? [
+          { role: "participant", content: request.message.content, at: now },
+          { role: "agent", content: response.reply.content, at: now },
+        ]
+      : [{ role: "participant", content: request.message.content, at: now }];
+    const memoryWrites = leak === undefined
+      ? response.memoryWrites
+      : [buildConversationMemoryWrites(request, "", CONVERSATION_MEMORY_IMPORTANCE)[0]];
+    const visibleMood = leak === undefined && response.affect.mood !== undefined && isCharacterVisibleMood(response.affect.mood.mood)
+      ? response.affect.mood
+      : undefined;
+    const applied = state.applyConversation(
+      request.agent.agentId,
+      {
+        turns,
+        memoryWrites,
+        ...(leak === undefined
+          ? {
+              affinityDelta: response.affect.affinityDelta,
+              ...(visibleMood !== undefined ? { mood: visibleMood } : {}),
+            }
+          : {}),
+      },
+      now,
+    );
+    if (leak === undefined) {
+      this.applyConversationEmotion(request.agent.agentId, response.affect.emotion, now, state);
+      // The participant answered: whatever she had opened with is no longer pending.
+      state.markProactiveRead(request.agent.agentId, now);
+    }
+    return { applied, ...(leak !== undefined ? { leak } : {}) };
   }
 
   /**
@@ -368,24 +948,83 @@ export class RealmHost {
     const date = this.now();
     const period = periodOf(date.getHours());
     const localDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-    const last = this.state.tickState();
+    const states = this.profiles?.allStates() ?? [this.state];
+    const reports: RealmTickReport[] = [];
+    for (const state of states) {
+      const report = await this.tickStateIfPeriodChanged(state, period, localDate, date);
+      if (report !== undefined) reports.push(report);
+    }
+    if (reports.length === 0) return undefined;
+    return {
+      period,
+      added: reports.reduce((total, report) => total + report.added, 0),
+      narratives: reports.reduce((total, report) => total + report.narratives, 0),
+      reflections: reports.reduce((total, report) => total + report.reflections, 0),
+      proactive: reports.reduce((total, report) => total + report.proactive, 0),
+      withheld: reports.reduce((total, report) => total + report.withheld, 0),
+      diagnostics: reports.flatMap((report) => report.diagnostics),
+      notes: reports.flatMap((report) => report.notes),
+    };
+  }
+
+  private async tickStateIfPeriodChanged(
+    state: RealmStateStore,
+    period: RealmRoutinePeriodV1,
+    localDate: string,
+    date: Date,
+  ): Promise<RealmTickReport | undefined> {
+    const last = state.tickState();
     if (last && last.date === localDate && last.period === period) {
       return undefined;
     }
-    this.ensureAffectInitialized(date);
-    const added = this.runTick(period, date);
-    this.runScriptedPlot(period, date);
-    this.state.setTickState({ date: localDate, period });
-    const notes: string[] = [];    const narratives = await this.runNarratives(period, date, notes);
-    const reflections = period === "night" ? await this.runDailyReflection(date, notes) : 0;
+    const storyGeneration = state.storyGeneration();
+    this.ensureAffectInitialized(state, date);
+    const withheldBefore = state.withheldDiagnosticCount();
+    const { added, diagnostics } = this.runTick(period, date, state);
+    this.runScriptedPlot(period, date, state);
+    state.setTickState({ date: localDate, period });
+    const notes: string[] = [];
+    const narratives = await this.runNarratives(period, date, notes, state, storyGeneration);
+    const reflections = period === "night" ? await this.runDailyReflection(date, notes, state, storyGeneration) : 0;
+    const proactive = await this.runProactiveMessages(period, date, notes, state, storyGeneration);
+    const withheld = state.withheldDiagnosticCount() - withheldBefore;
+    this.noteDegradedTick(period, date, notes, state);
+    return { period, added, narratives, reflections, proactive, withheld, diagnostics, notes };
+  }
 
-    return { period, added, narratives, reflections, notes };
+  /**
+   * "Fallback means degradation": a tick that produced no character-visible
+   * memory only moved deterministic templates, which the memory stream refuses.
+   * Say so out loud — otherwise a template-only day looks like a quiet one.
+   */
+  private noteDegradedTick(
+    period: RealmRoutinePeriodV1,
+    date: Date,
+    notes: string[],
+    state: RealmStateStore,
+  ): void {
+    const now = date.toISOString();
+    // "Lived" means a narrative or a reflection: scripted plot labels and
+    // deterministic templates are not a day she actually had.
+    const degraded = state.config.agents
+      .filter((agent) => !state.memoriesFor(agent.agentId).some((record) =>
+        record.createdAt === now &&
+        isCharacterVisibleMemory(record) &&
+        (record.kind === "reflection" || record.tags.includes("life-narrative"))))
+      .map((agent) => agent.agentId);
+    if (degraded.length > 0) {
+      notes.push(
+        `tick ${period}: ${degraded.join(", ")} produced no character-visible memory (deterministic templates withheld from the memory stream)`,
+      );
+    }
   }
 
   private async runNarratives(
     period: RealmRoutinePeriodV1,
     date: Date,
     notes: string[],
+    state: RealmStateStore,
+    storyGeneration: number,
   ): Promise<number> {
     const llm = this.llm();
     if (!llm) {
@@ -393,36 +1032,49 @@ export class RealmHost {
     }
     const now = date.toISOString();
     let written = 0;
-    for (const agent of this.state.config.agents) {
-      const routine = selectRoutineForPeriod(agent.routines, period, this.state.affectState(agent.agentId));
+    for (const agent of state.config.agents) {
+      if (state.storyGeneration() !== storyGeneration) {
+        notes.push(`${state.config.user.participantId}: narrative discarded after story changed`);
+        return written;
+      }
+      const routine = selectRoutineForPeriod(
+        agent.routines,
+        period,
+        state.affectState(agent.agentId),
+        typeof agent.persona === "object" ? agent.persona.personalityDimensions : undefined,
+      );
       if (!routine) {
         continue;
       }
-      const recentNarratives = this.state
+      const recentNarratives = state
         .memoriesFor(agent.agentId)
         .filter((record) => record.tags.includes("life-narrative"))
+        .filter(isCharacterVisibleMemory)
         .slice(-NARRATIVE_CONTINUITY_WINDOW)
         .map((record) => record.content);
 
       // Stamp the agent's current affect onto the narrative memory so the
       // tick track also carries an emotional signature (affect.md candidate),
       // and inject it into the diary prompt so the mood colors the writing.
-      const affect = this.state.affectState(agent.agentId);
+      const affect = state.affectState(agent.agentId);
       // Diary can reference the day's relationship arc when it moved.
       const localDay = now.slice(0, 10);
-      const dayHistory = this.state.relationshipHistory(agent.agentId, `${localDay}T00:00:00.000Z`);
+      const dayHistory = state.relationshipHistory(agent.agentId, `${localDay}T00:00:00.000Z`);
       const relationshipArc =
         dayHistory.length >= 2 && dayHistory[0].affinity !== dayHistory[dayHistory.length - 1].affinity
-          ? `Relationship today: your bond with ${this.state.config.user.displayName} moved from ${dayHistory[0].affinity} to ${dayHistory[dayHistory.length - 1].affinity} (scale -100..100).`
+          ? `Relationship today: your bond with ${state.config.user.displayName} moved from ${dayHistory[0].affinity} to ${dayHistory[dayHistory.length - 1].affinity} (scale -100..100).`
           : undefined;
-      const loreHits = retrieveLoreEntries(this.lore, {
+      const loreQuery = [routine.intent, ...recentNarratives].join("\n");
+      const loreHits = retrieveLoreEntries(this.availableSummaryLore(), {
         agentId: agent.agentId,
-        text: [routine.intent, ...recentNarratives].join("\n"),
+        text: loreQuery,
         topK: DEFAULT_LORE_RETRIEVAL_TOP_K,
       }).hits;
+      const storyContext = this.storyContextFor(state, agent, loreQuery);
       const result = await runLifeNarrative(llm, {
         agentId: agent.agentId,
         displayName: agent.displayName,
+        personaId: agent.personaId,
         persona: agent.persona,
         period,
         locationId: routine.locationId,
@@ -432,16 +1084,22 @@ export class RealmHost {
         ...(affect !== undefined ? { affect, emotion: { valence: affect.valence, arousal: affect.arousal } } : {}),
         ...(relationshipArc !== undefined ? { relationshipArc } : {}),
         loreHits,
-        selfConcept: this.state.getSelfConceptSnapshot(agent.agentId),
+        storyContext,
+        selfConcept: state.getSelfConceptSnapshot(agent.agentId),
       });
+      if (state.storyGeneration() !== storyGeneration) {
+        notes.push(`${state.config.user.participantId}: narrative discarded after story changed`);
+        return written;
+      }
       if ("write" in result) {
-        // OOC guard covers every LLM output surface: a diary that breaks
-        // character stays visible instead of silently entering the stream.
+        // Keep leaked diary text visible in the tick report, but out of the
+        // lived-memory stream so later prompts cannot reinforce the mistake.
         const leak = detectOocLeak(result.write.content);
         if (leak !== undefined) {
-          notes.push(`${agent.agentId}: narrative ooc-leak: ${leak}`);
+          notes.push(`${agent.agentId}: narrative ooc-leak: ${leak} (quarantined)`);
+          continue;
         }
-        this.state.applyMemoryWrites(agent.agentId, [result.write]);
+        state.applyMemoryWrites(agent.agentId, [result.write]);
         written += 1;
       } else {
         notes.push(`${agent.agentId}: ${result.error}`);
@@ -450,7 +1108,185 @@ export class RealmHost {
     return written;
   }
 
-  private async runDailyReflection(date: Date, notes: string[]): Promise<number> {
+  /**
+   * Let an agent open the conversation herself. Every guard is deterministic
+   * and runs first — quiet hours, the tier interval, exponential backoff while
+   * her last message went unanswered, an unanswered cap, and a material check —
+   * so "do not disturb" never depends on a model's judgement. The LLM only
+   * writes the words: without one, or on failure, she simply stays quiet.
+   */
+  private async runProactiveMessages(
+    period: RealmRoutinePeriodV1,
+    date: Date,
+    notes: string[],
+    state: RealmStateStore,
+    storyGeneration: number,
+  ): Promise<number> {
+    const now = date.toISOString();
+    let sent = 0;
+    for (const agent of state.config.agents) {
+      const config = resolveProactiveConfig(agent.proactive);
+      const material = this.proactiveMaterial(state, agent.agentId);
+      const decision = decideProactiveMessage({
+        enabled: config.enabled,
+        now: date,
+        tier: config.tier,
+        ...this.proactiveBackoff(state, agent.agentId),
+        hasMaterial: material.length > 0,
+      });
+      if (!decision.send) {
+        continue;
+      }
+      const llm = this.llm();
+      if (!llm) {
+        notes.push(`${agent.agentId}: proactive message skipped — no conversation llm configured`);
+        continue;
+      }
+      if (state.storyGeneration() !== storyGeneration) {
+        notes.push(`${agent.agentId}: proactive message discarded after story changed`);
+        return sent;
+      }
+      const affect = state.affectState(agent.agentId);
+      const localDay = now.slice(0, 10);
+      const dayHistory = state.relationshipHistory(agent.agentId, `${localDay}T00:00:00.000Z`);
+      const relationshipArc =
+        dayHistory.length >= 2 && dayHistory[0].affinity !== dayHistory[dayHistory.length - 1].affinity
+          ? `Relationship today: your bond with ${state.config.user.displayName} moved from ${dayHistory[0].affinity} to ${dayHistory[dayHistory.length - 1].affinity} (scale -100..100).`
+          : undefined;
+      const loreQuery = material.map((record) => record.content).join("\n");
+      const loreHits = retrieveLoreEntries(this.availableSummaryLore(), {
+        agentId: agent.agentId,
+        text: loreQuery,
+        topK: DEFAULT_LORE_RETRIEVAL_TOP_K,
+      }).hits;
+      const storyContext = this.storyContextFor(state, agent, loreQuery);
+      const input: ProactiveMessageInput = {
+        agentId: agent.agentId,
+        displayName: agent.displayName,
+        personaId: agent.personaId,
+        persona: agent.persona,
+        participantName: state.config.user.displayName,
+        now,
+        period,
+        material: material.map((record) => record.content),
+        recentMessages: state
+          .proactiveMessages(agent.agentId, PROACTIVE_RECENT_LIMIT)
+          .map((message) => message.content),
+        ...(affect !== undefined ? { affect } : {}),
+        ...(relationshipArc !== undefined ? { relationshipArc } : {}),
+        loreHits,
+        storyContext,
+        selfConcept: state.getSelfConceptSnapshot(agent.agentId),
+      };
+      const result = await runProactiveMessage(llm, input);
+      if (state.storyGeneration() !== storyGeneration) {
+        notes.push(`${agent.agentId}: proactive message discarded after story changed`);
+        return sent;
+      }
+      if ("skipped" in result) {
+        // The writer declined: expected and silent, the material stays for later.
+        continue;
+      }
+      if ("error" in result) {
+        notes.push(`${agent.agentId}: ${result.error}`);
+        continue;
+      }
+      // The message is both a transcript turn — so her next reply knows she
+      // said it — and an unread entry, which the backoff guard measures.
+      state.applyConversation(
+        agent.agentId,
+        { turns: [{ role: "agent", content: result.content, at: now }], memoryWrites: [] },
+        now,
+      );
+      state.appendProactiveMessage(agent.agentId, {
+        content: result.content,
+        createdAt: now,
+        trigger: decision.reason,
+      });
+      sent += 1;
+    }
+    return sent;
+  }
+
+  /** Her last message and how many of them went unanswered. */
+  private proactiveBackoff(
+    state: RealmStateStore,
+    agentId: string,
+  ): { lastProactiveAt?: string; unanswered: number } {
+    const messages = state.proactiveMessages(agentId);
+    const last = messages[messages.length - 1];
+    const lastParticipantAt = [...state.historyFor(agentId)]
+      .reverse()
+      .find((turn) => turn.role === "participant")?.at;
+    const unanswered = messages.filter(
+      (message) => lastParticipantAt === undefined || message.createdAt > lastParticipantAt,
+    ).length;
+    return {
+      ...(last !== undefined ? { lastProactiveAt: last.createdAt } : {}),
+      unanswered,
+    };
+  }
+
+  /** Character-visible moments she can talk about, written since she last spoke. */
+  private proactiveMaterial(
+    state: RealmStateStore,
+    agentId: string,
+  ): readonly MemoryRecord<RealmMemoryMetadataV1>[] {
+    const messages = state.proactiveMessages(agentId, 1);
+    const lastAt = messages[messages.length - 1]?.createdAt;
+    return state
+      .memoriesFor(agentId)
+      .filter((record) => record.kind === "observation" || record.kind === "reflection")
+      .filter(isCharacterVisibleMemory)
+      .filter((record) => lastAt === undefined || record.createdAt > lastAt)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .slice(-PROACTIVE_MATERIAL_LIMIT);
+  }
+
+  /**
+   * Read-only view of the proactive channel, including why she is or is not
+   * speaking right now — the "why did she stay quiet" surface.
+   */
+  proactiveInspection(agentId: string, profileId?: string): {
+    agentId: string;
+    profileId: string;
+    unread: readonly ProactiveMessageV1[];
+    recent: readonly ProactiveMessageV1[];
+    decision: ProactiveDecision;
+  } {
+    const state = this.stateFor(profileId);
+    const agent = state.agent(agentId);
+    const config = resolveProactiveConfig(agent.proactive);
+    const date = this.now();
+    const decision = decideProactiveMessage({
+      enabled: config.enabled,
+      now: date,
+      tier: config.tier,
+      ...this.proactiveBackoff(state, agentId),
+      hasMaterial: this.proactiveMaterial(state, agentId).length > 0,
+    });
+    return {
+      agentId,
+      profileId: state.config.user.participantId,
+      unread: state.unreadProactiveMessages(agentId),
+      recent: state.proactiveMessages(agentId, PROACTIVE_RECENT_LIMIT),
+      decision,
+    };
+  }
+
+  /** The participant answered: her pending messages count as read. */
+  markProactiveRead(agentId: string, profileId?: string): number {
+    const state = this.stateFor(profileId);
+    state.agent(agentId);
+    return state.markProactiveRead(agentId, this.now().toISOString());
+  }
+
+  private async runDailyReflection(
+    date: Date,
+    notes: string[],
+    state: RealmStateStore,
+    storyGeneration: number,
+  ): Promise<number> {
     const llm = this.llm();
     if (!llm) {
       return 0;
@@ -459,11 +1295,16 @@ export class RealmHost {
     const localDay = now.slice(0, 10);
     let written = 0;
 
-    for (const agent of this.state.config.agents) {
+    for (const agent of state.config.agents) {
+      if (state.storyGeneration() !== storyGeneration) {
+        notes.push(`${state.config.user.participantId}: reflection discarded after story changed`);
+        return written;
+      }
       // Evidence: today's most important memories, excluding prior reflections.
-      const evidence = this.state
+      const evidence = state
         .memoriesFor(agent.agentId)
         .filter((record) => record.kind !== "reflection")
+        .filter(isCharacterVisibleMemory)
         .filter((record) => record.createdAt.slice(0, 10) === localDay)
         .sort((a, b) => b.importance - a.importance)
         .slice(0, REFLECTION_EVIDENCE_LIMIT);
@@ -472,23 +1313,27 @@ export class RealmHost {
       }
 
       // Relationship arc: quote today's affinity trajectory when it moved.
-      const history = this.state.relationshipHistory(agent.agentId, `${localDay}T00:00:00.000Z`);
+      const history = state.relationshipHistory(agent.agentId, `${localDay}T00:00:00.000Z`);
       const relationshipArc =
         history.length >= 2 && history[0].affinity !== history[history.length - 1].affinity
-          ? `Relationship arc today: your bond with ${this.state.config.user.displayName} moved from ${history[0].affinity} to ${history[history.length - 1].affinity} (scale -100..100).`
+          ? `Relationship arc today: your bond with ${state.config.user.displayName} moved from ${history[0].affinity} to ${history[history.length - 1].affinity} (scale -100..100).`
           : undefined;
-      const loreHits = retrieveLoreEntries(this.lore, {
+      const loreQuery = evidence.map((record) => record.content).join("\n");
+      const loreHits = retrieveLoreEntries(this.availableSummaryLore(), {
         agentId: agent.agentId,
-        text: evidence.map((record) => record.content).join("\n"),
+        text: loreQuery,
         topK: DEFAULT_LORE_RETRIEVAL_TOP_K,
       }).hits;
+      const storyContext = this.storyContextFor(state, agent, loreQuery);
 
       const planner = createLlmReflectionPlanner<RealmMemoryMetadataV1>(llm, {
         personaName: agent.displayName,
         persona: agent.persona,
         ...(relationshipArc !== undefined ? { relationshipArc } : {}),
         loreHits,
-        selfConcept: this.state.getSelfConceptSnapshot(agent.agentId),
+        storyContext,
+        speakerAliases: dialogueSpeakerAliases(agent.displayName, agent.personaId),
+        selfConcept: state.getSelfConceptSnapshot(agent.agentId),
       });
       const reflection = await runReflection(
         {
@@ -503,10 +1348,14 @@ export class RealmHost {
         },
         planner,
       );
+      if (state.storyGeneration() !== storyGeneration) {
+        notes.push(`${state.config.user.participantId}: reflection discarded after story changed`);
+        return written;
+      }
 
       const attemptId = `reflection_${now}_${agent.agentId}`;
       if (reflection.selfConceptProposalError !== undefined) {
-        this.state.appendSelfConceptDecisionAudit(
+        state.appendSelfConceptDecisionAudit(
           agent.agentId,
           attemptId,
           "parse_failure",
@@ -519,22 +1368,38 @@ export class RealmHost {
         notes.push(`${agent.agentId}: self-concept proposal ${reflection.selfConceptProposalError}`);
       }
       if (reflection.selfConceptProposal !== undefined) {
-        this.state.appendSelfConceptAttemptStarted(
+        state.appendSelfConceptAttemptStarted(
           agent.agentId,
           attemptId,
           reflection.selfConceptProposal.proposalId,
           now,
         );
-        const decision = this.state.applySelfConceptProposal(
-          agent.agentId,
-          reflection.selfConceptProposal,
-          now,
-          attemptId,
-        );
-        if (decision.outcome === "revision_conflict") {
-          notes.push(`${agent.agentId}: self-concept revision conflict at ${decision.observedRevision}`);
-        } else if (decision.outcome !== "accepted") {
-          notes.push(`${agent.agentId}: self-concept ${decision.outcome}`);
+        const proposalLeak = detectSelfConceptOocLeak(reflection.selfConceptProposal);
+        if (proposalLeak !== undefined) {
+          state.appendSelfConceptDecisionAudit(
+            agent.agentId,
+            attemptId,
+            "rejected",
+            now,
+            {
+              schemaVersion: SELF_CONCEPT_AUDIT_SCHEMA_VERSION,
+              failureClass: `ooc-leak:${proposalLeak}`,
+            },
+            reflection.selfConceptProposal.proposalId,
+          );
+          notes.push(`${agent.agentId}: self-concept ooc-leak: ${proposalLeak} (quarantined)`);
+        } else {
+          const decision = state.applySelfConceptProposal(
+            agent.agentId,
+            reflection.selfConceptProposal,
+            now,
+            attemptId,
+          );
+          if (decision.outcome === "revision_conflict") {
+            notes.push(`${agent.agentId}: self-concept revision conflict at ${decision.observedRevision}`);
+          } else if (decision.outcome !== "accepted") {
+            notes.push(`${agent.agentId}: self-concept ${decision.outcome}`);
+          }
         }
       }
 
@@ -548,15 +1413,18 @@ export class RealmHost {
             source: "engine",
           } as RealmMemoryMetadataV1,
         }));
-        // OOC guard covers the inner voice too.
-        for (const write of writes) {
+        // Keep leaked reflection text visible in diagnostics, but out of the
+        // evidence stream used by future reflections and conversations.
+        const cleanWrites = writes.filter((write) => {
           const leak = detectOocLeak(write.content);
-          if (leak !== undefined) {
-            notes.push(`${agent.agentId}: reflection ooc-leak: ${leak}`);
-          }
+          if (leak === undefined) return true;
+          notes.push(`${agent.agentId}: reflection ooc-leak: ${leak} (quarantined)`);
+          return false;
+        });
+        if (cleanWrites.length > 0) {
+          state.applyMemoryWrites(agent.agentId, cleanWrites);
+          written += cleanWrites.length;
         }
-        this.state.applyMemoryWrites(agent.agentId, writes);
-        written += writes.length;
       } else if (reflection.status !== "completed") {
         const detail = reflection.diagnostics.map((entry) => entry.message).join("; ");
         notes.push(`${agent.agentId}: reflection ${reflection.status}: ${detail}`);
@@ -573,8 +1441,10 @@ export class RealmHost {
   plotEvent(
     agentId: string,
     input: { type: PlotEventType; target: PlotEventTarget; intensity?: number },
+    profileId?: string,
   ): AffectState {
-    this.state.agent(agentId);
+    const state = this.stateFor(profileId);
+    state.agent(agentId);
     const at = this.now().toISOString();
     this.eventCounter += 1;
     const intensity = Math.min(1, Math.max(0, input.intensity ?? 1));
@@ -586,25 +1456,25 @@ export class RealmHost {
       at,
     };
     const current =
-      this.state.affectState(agentId) ?? createInitialAffectState(agentId, at, personaBaseline(this.state.agent(agentId)));
+      state.affectState(agentId) ?? createInitialAffectState(agentId, at, personaBaseline(state.agent(agentId)));
     const proposal: RealmAffectProposalV1 = {
       affect: applyPlotEvents(
         current,
         [event],
         at,
-        personaAffectModifiers(this.state.agent(agentId)),
+        personaAffectModifiers(state.agent(agentId)),
       ),
-      affinityDelta: computeAffinityDelta([event], personaAffectModifiers(this.state.agent(agentId))),
+      affinityDelta: computeAffinityDelta([event], personaAffectModifiers(state.agent(agentId))),
     };
-    this.state.applyAffectProposal(agentId, proposal, at);
+    state.applyAffectProposal(agentId, proposal, at);
     // The event becomes part of the character's life: a retrievable memory so
     // later conversations can naturally reference it (experience → memory →
     // mention). Manual feeds and scripted plots share this path.
-    this.state.applyMemoryWrites(agentId, [
+    state.applyMemoryWrites(agentId, [
       {
         id: `plotmem_${at}_${this.eventCounter}`,
         kind: "observation",
-        content: this.plotExperienceLine(event),
+        content: this.plotExperienceLine(event, state),
         createdAt: at,
         importance: PLOT_EVENT_MEMORY_IMPORTANCE,
         sourceIds: [event.id],
@@ -621,10 +1491,10 @@ export class RealmHost {
   }
 
   /** A natural first-person line describing a plot event as an experience. */
-  private plotExperienceLine(event: PlotEvent): string {
+  private plotExperienceLine(event: PlotEvent, state: RealmStateStore): string {
     const label = PLOT_EVENT_LABELS[event.type];
     if (event.target === "host") {
-      return `今天和${this.state.config.user.displayName}之间发生了一件${label}的事。`;
+      return `今天和${state.config.user.displayName}之间发生了一件${label}的事。`;
     }
     if (event.target === "self") {
       return `今天经历了一件${label}的事。`;
@@ -637,11 +1507,11 @@ export class RealmHost {
    * character's temperament baseline (ACT fundamental sentiments) so decay
    * regresses toward their own disposition, not a shared default.
    */
-  private ensureAffectInitialized(date: Date): void {
+  private ensureAffectInitialized(state: RealmStateStore, date: Date): void {
     const now = date.toISOString();
-    for (const agent of this.state.config.agents) {
-      if (this.state.affectState(agent.agentId) === undefined) {
-        this.state.applyAffectProposal(
+    for (const agent of state.config.agents) {
+      if (state.affectState(agent.agentId) === undefined) {
+        state.applyAffectProposal(
           agent.agentId,
           {
             affect: createInitialAffectState(agent.agentId, now, personaBaseline(agent)),
@@ -662,20 +1532,21 @@ export class RealmHost {
     agentId: string,
     emotion: { valence: number; arousal: number } | undefined,
     now: string,
+    state: RealmStateStore,
   ): void {
     if (emotion === undefined) {
       return;
     }
-    const agent = this.state.agent(agentId);
+    const agent = state.agent(agentId);
     const current =
-      this.state.affectState(agentId) ?? createInitialAffectState(agentId, now, personaBaseline(agent));
+      state.affectState(agentId) ?? createInitialAffectState(agentId, now, personaBaseline(agent));
     // Emotional expressiveness is a character trait: the blend weight comes
     // from the persona (default 0.1), so composed characters barely move.
     const rate =
       typeof agent.persona === "object" && agent.persona.emotionResponsiveness !== undefined
         ? agent.persona.emotionResponsiveness
         : CONVERSATION_EMOTION_BLEND_RATE;
-    this.state.applyAffectProposal(
+    state.applyAffectProposal(
       agentId,
       {
         affect: blendConversationEmotion(current, emotion, now, rate),
@@ -686,36 +1557,40 @@ export class RealmHost {
   }
 
   /** Feed each agent's scripted plot events for this period, if configured. */
-  private runScriptedPlot(period: RealmRoutinePeriodV1, date: Date): void {
-    const at = date.toISOString();
-    for (const agent of this.state.config.agents) {
-      const script = agent.plotScript?.find((entry) => entry.period === period);
-      // Weekday filter: scripts with `days` only fire on those weekdays.
-      if (!script || script.events.length === 0) {
-        continue;
-      }
-      if (script.days !== undefined && !script.days.includes(date.getDay())) {
-        continue;
-      }
-      for (const event of script.events) {
-        this.plotEvent(agent.agentId, event);
+  private runScriptedPlot(period: RealmRoutinePeriodV1, date: Date, state: RealmStateStore): void {
+    for (const agent of state.config.agents) {
+      for (const script of agent.plotScript ?? []) {
+        if (script.period !== period || script.events.length === 0) {
+          continue;
+        }
+        // Weekday filter: scripts with `days` only fire on those weekdays.
+        if (script.days !== undefined && !script.days.includes(date.getDay())) {
+          continue;
+        }
+        for (const event of script.events) {
+          this.plotEvent(agent.agentId, event, state.config.user.participantId);
+        }
       }
     }
   }
 
-  private runTick(period: RealmRoutinePeriodV1, date: Date): number {
+  private runTick(period: RealmRoutinePeriodV1, date: Date, state: RealmStateStore): {
+    added: number;
+    diagnostics: string[];
+  } {
     const now = date.toISOString();
     // Millisecond timestamp keeps stepIds unique even across restarts within
     // the same hour, so executor-generated memory ids can never collide with
     // records already in the stream.
     const stepId = `step_${date.getTime()}_${period}`;
 
-    const agents = this.state.config.agents
+    const agents = state.config.agents
       .map((agent) => {
         const routine = selectRoutineForPeriod(
           agent.routines,
           period,
-          this.state.affectState(agent.agentId),
+          state.affectState(agent.agentId),
+          typeof agent.persona === "object" ? agent.persona.personalityDimensions : undefined,
         );
         if (!routine) {
           return undefined;
@@ -739,14 +1614,14 @@ export class RealmHost {
               intent: routine.intent,
             },
           },
-          memories: this.state.memoriesFor(agent.agentId),
-          affectState: this.state.affectState(agent.agentId),
+          memories: state.memoriesFor(agent.agentId),
+          affectState: state.affectState(agent.agentId),
         };
       })
       .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined);
 
     if (agents.length === 0) {
-      return 0;
+      return { added: 0, diagnostics: [] };
     }
 
     const result = executeRealmAgentStepV1({
@@ -757,12 +1632,20 @@ export class RealmHost {
     });
 
     let added = 0;
+    const diagnostics: string[] = [];
     for (const output of result.agents) {
-      added += this.state.applyTickMemories(output.agentId, output.memories);
+      added += state.applyTickMemories(output.agentId, output.memories);
+      // Deterministic templates are diagnostics: report them here instead of
+      // letting them into the memory stream (see runTick's caller).
+      for (const record of output.memories) {
+        if (record.createdAt === now && isEngineDiagnosticRecord(record)) {
+          diagnostics.push(`${output.agentId}: ${record.content}`);
+        }
+      }
       if (output.affectProposal) {
-        this.state.applyAffectProposal(output.agentId, output.affectProposal, now);
+        state.applyAffectProposal(output.agentId, output.affectProposal, now);
       }
     }
-    return added;
+    return { added, diagnostics };
   }
 }

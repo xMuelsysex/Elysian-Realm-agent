@@ -2,7 +2,7 @@
 
 ## 版本策略
 
-- `@earendil-works/pi-ai` 与 `@earendil-works/pi-agent-core` **精确锁定同一版本**（当前 0.82.1，两包 lockstep 发版），`.npmrc` 已设 `save-exact=true`。
+- `@earendil-works/pi-ai` 与 `@earendil-works/pi-agent-core` **精确锁定同一版本**（当前 0.84.1，两包 lockstep 发版），`.npmrc` 已设 `save-exact=true`。
 - 升级流程：手动、在 minor 边界集中升，先读上游 `packages/{ai,agent}/CHANGELOG.md` 的 **Breaking Changes** 节（记录规范）。breaking 高发区在 harness/session 层；`Agent` 类、agent-loop、钩子（`transformContext`/`prepareNextTurn`）、事件订阅相对稳定。
 - Node engines ≥22.19.0（pi 硬要求）；官方另有 `legacy-node20` dist-tag（0.74.x），无需理会。
 - 上游源码参考：`git clone --depth 1 https://github.com/earendil-works/pi /tmp/pi-repo`（MIT）。

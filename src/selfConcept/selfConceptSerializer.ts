@@ -5,6 +5,7 @@ import {
   validateSelfConceptSnapshot,
   type SelfConceptSnapshotV1,
 } from "./selfConceptRecords.js";
+import { detectOocLeak } from "../conversation/oocGuard.js";
 
 export const SELF_CONCEPT_BEGIN_DELIMITER = "[BEGIN_REALM_SELF_CONCEPT_SNAPSHOT_V1]";
 export const SELF_CONCEPT_END_DELIMITER = "[END_REALM_SELF_CONCEPT_SNAPSHOT_V1]";
@@ -20,18 +21,19 @@ export function serializeSelfConceptSnapshot(
     return undefined;
   }
   const normalized = validateSelfConceptSnapshot(snapshot);
+  const selfConceptText = [
+    normalized.summary,
+    ...normalized.beliefs.map((belief) => belief.statement),
+  ];
+  if (selfConceptText.some((text) => detectOocLeak(text) !== undefined)) {
+    return undefined;
+  }
+  // Proposal IDs, timestamps, and evidence pointers are host bookkeeping;
+  // retain only the revision needed to state which approved snapshot is current.
   const payload = JSON.stringify({
-    schemaVersion: normalized.schemaVersion,
     revision: normalized.revision,
-    acceptedAt: normalized.acceptedAt,
-    proposalId: normalized.proposalId,
     summary: normalized.summary,
-    sourceMemoryIds: normalized.sourceMemoryIds,
-    beliefs: normalized.beliefs.map((belief) => ({
-      beliefId: belief.beliefId,
-      statement: belief.statement,
-      sourceMemoryIds: belief.sourceMemoryIds,
-    })),
+    beliefs: normalized.beliefs.map((belief) => ({ statement: belief.statement })),
   });
   const escapedPayload = escapeFrameTokens(payload);
   const bytes = new TextEncoder().encode(escapedPayload).byteLength;

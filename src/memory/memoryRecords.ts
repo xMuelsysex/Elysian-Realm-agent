@@ -63,6 +63,14 @@ export interface MemoryRecord<Metadata = Record<string, unknown>> {
   tags: readonly string[];
   /** How the agent felt when this memory was formed; absent on emotion-free records. */
   emotion?: EmotionSignature;
+  /**
+   * When this memory stopped being true (superseded, or retired by governance).
+   * Invalidated records stay stored as provenance — deleting them would lose
+   * the history — but no projection, prompt or retrieval hands them back.
+   */
+  invalidAt?: string;
+  /** The record that replaced this one, when a newer fact superseded it. */
+  supersededBy?: string;
   metadata: Metadata;
 }
 

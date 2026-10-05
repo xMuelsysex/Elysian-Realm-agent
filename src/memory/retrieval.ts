@@ -11,11 +11,34 @@ import {
   type NormalizedMemoryRetrievalQuery,
 } from "./memoryRecords.js";
 import { validateMemoryRetrievalQuery } from "./validation.js";
-import { tokenizeText } from "../text/tokenize.js";
+import { buildCorpusStats, scoreBm25, type Bm25CorpusStats, type TokenFrequencies } from "../text/bm25.js";
+import { tokenizeSearchFrequencies } from "../text/tokenize.js";
 
 interface ScoredRecord<Metadata> {
   record: MemoryRecord<Metadata>;
   score: MemoryScoreBreakdown;
+}
+
+/**
+ * Length normalization is off for the memory stream (measured, not assumed).
+ *
+ * LoCoMo 证据召回 @10（default / lexical-only 权重）：b=0 → 34.6 / 47.5，b=0.25 →
+ * 33.1 / 47.7，b=0.5 → 31.6 / 47.3，b=0.75 → 29.1 / 46.7。合成唯一答案语料里「唯一相关
+ * 但既旧又不重要」的 recall@1：b=0 → 95%，b≥0.25 → 20%。
+ * 原因：记忆流里最长的记录恰好是最具体的记录，长度惩罚正好压掉值得召回的那些。
+ * TF 饱和与 IDF 保留。
+ */
+const MEMORY_BM25_OPTIONS = { b: 0 } as const;
+
+/**
+ * Everything the keyword signal needs, built once per retrieval call over the
+ * agent's candidates: the query's term frequencies, the corpus statistics, and
+ * each candidate's precomputed frequencies so scoring stays a single pass.
+ */
+interface MemorySearchIndex {
+  readonly query: TokenFrequencies;
+  readonly corpus: Bm25CorpusStats;
+  readonly frequenciesByMemoryId: ReadonlyMap<string, TokenFrequencies>;
 }
 
 export function retrieveMemoryRecords<Metadata = Record<string, unknown>>(
@@ -32,12 +55,17 @@ export function retrieveMemoryRecords<Metadata = Record<string, unknown>>(
       excluded.push({ memoryId: record.id, reason: "different agentId" });
       continue;
     }
+    if (record.invalidAt !== undefined) {
+      excluded.push({ memoryId: record.id, reason: "invalidated" });
+      continue;
+    }
     candidates.push(record);
   }
 
+  const index = buildSearchIndex(candidates, normalizedQuery.text);
   const scored = candidates.map((record) => ({
     record,
-    score: scoreMemoryRecord(record, normalizedQuery),
+    score: scoreRecordWithIndex(record, normalizedQuery, index),
   }));
 
   scored.sort(compareScoredRecords);
@@ -56,7 +84,15 @@ export function scoreMemoryRecord<Metadata>(
   record: MemoryRecord<Metadata>,
   query: NormalizedMemoryRetrievalQuery,
 ): MemoryScoreBreakdown {
-  const relevance = scoreRelevance(record, query);
+  return scoreRecordWithIndex(record, query, buildSearchIndex([record], query.text));
+}
+
+function scoreRecordWithIndex<Metadata>(
+  record: MemoryRecord<Metadata>,
+  query: NormalizedMemoryRetrievalQuery,
+  index: MemorySearchIndex,
+): MemoryScoreBreakdown {
+  const relevance = scoreRelevance(record, query, index);
   const recency = scoreRecency(record.createdAt, query.now);
   const importance = normalizeScore(record.importance / MEMORY_IMPORTANCE_MAX);
   const emotion = query.emotionBias !== undefined
@@ -142,15 +178,40 @@ function compareScoredRecords<Metadata>(left: ScoredRecord<Metadata>, right: Sco
   return left.record.id.localeCompare(right.record.id);
 }
 
-function scoreRelevance<Metadata>(record: MemoryRecord<Metadata>, query: NormalizedMemoryRetrievalQuery): number {
+function buildSearchIndex<Metadata>(
+  records: readonly MemoryRecord<Metadata>[],
+  queryText: string,
+): MemorySearchIndex {
+  const frequenciesByMemoryId = new Map<string, TokenFrequencies>();
+  for (const record of records) {
+    frequenciesByMemoryId.set(record.id, recordFrequencies(record));
+  }
+  return {
+    query: tokenizeSearchFrequencies(queryText),
+    corpus: buildCorpusStats([...frequenciesByMemoryId.values()]),
+    frequenciesByMemoryId,
+  };
+}
+
+function recordFrequencies<Metadata>(record: MemoryRecord<Metadata>): TokenFrequencies {
+  const frequencies = tokenizeSearchFrequencies(record.content);
+  for (const tag of record.tags) {
+    for (const [term, count] of tokenizeSearchFrequencies(tag)) {
+      frequencies.set(term, (frequencies.get(term) ?? 0) + count);
+    }
+  }
+  return frequencies;
+}
+
+function scoreRelevance<Metadata>(
+  record: MemoryRecord<Metadata>,
+  query: NormalizedMemoryRetrievalQuery,
+  index: MemorySearchIndex,
+): number {
   const channelScores: number[] = [];
-  const queryTokens = tokenizeText(query.text);
-  if (queryTokens.size > 0) {
-    const recordTokens = new Set([
-      ...tokenizeText(record.content),
-      ...record.tags.flatMap((tag) => [...tokenizeText(tag)]),
-    ]);
-    channelScores.push(scoreSetOverlap(queryTokens, recordTokens));
+  if (index.query.size > 0) {
+    const recordFreqs = index.frequenciesByMemoryId.get(record.id) ?? recordFrequencies(record);
+    channelScores.push(scoreBm25(index.query, recordFreqs, index.corpus, MEMORY_BM25_OPTIONS));
   }
 
   if (query.tags.length > 0) {
