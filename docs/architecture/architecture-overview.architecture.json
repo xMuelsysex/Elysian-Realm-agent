@@ -1,0 +1,205 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Elysian Realm Agent 整体架构",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/architecture/architecture-overview.html",
+    "viewBox": [1280, 700],
+    "repository": {
+      "url": "https://github.com/xMuelsysex/Elysian-Realm-agent",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "9850d5e01ed4379d3666e31f69f2da15189f0bf6"
+    }
+  },
+  "components": [
+    {
+      "id": "clients",
+      "type": "external",
+      "label": "浏览器参与者",
+      "sublabel": "聊天 / 后台 / 测试台",
+      "pos": [20, 20],
+      "size": [170, 70],
+      "sources": [{ "path": "src/host/chatPage.ts", "line": 19, "label": "CHAT_PAGE_HTML" }]
+    },
+    {
+      "id": "http",
+      "type": "security",
+      "label": "HTTP 入口",
+      "sublabel": "/v1/host/* + admin",
+      "pos": [20, 170],
+      "size": [170, 70],
+      "sources": [{ "path": "src/host/hostApi.ts", "line": 16, "label": "createHostApiHandler" }]
+    },
+    {
+      "id": "profiles",
+      "type": "database",
+      "label": "档案管理",
+      "sublabel": "按 profileId 隔离",
+      "pos": [290, 140],
+      "size": [170, 70],
+      "sources": [{ "path": "src/host/realmProfiles.ts", "line": 37, "label": "RealmProfileManager" }]
+    },
+    {
+      "id": "host",
+      "type": "backend",
+      "label": "RealmHost 宿主权威",
+      "sublabel": "持有全部状态",
+      "pos": [290, 280],
+      "size": [170, 90],
+      "sources": [
+        { "path": "src/host/realmHost.ts", "line": 331, "label": "RealmHost" },
+        { "path": "src/host/realmHost.ts", "line": 655, "label": "chat()" },
+        { "path": "src/host/realmHost.ts", "line": 867, "label": "tickIfPeriodChanged()" }
+      ]
+    },
+    {
+      "id": "state",
+      "type": "database",
+      "label": "RealmStateStore",
+      "sublabel": "realm.sqlite",
+      "pos": [290, 440],
+      "size": [170, 70],
+      "sources": [{ "path": "src/host/realmState.ts", "line": 528, "label": "RealmStateStore" }]
+    },
+    {
+      "id": "tick",
+      "type": "backend",
+      "label": "确定性 tick 轨",
+      "sublabel": "realm-agent-step.v1",
+      "pos": [550, 140],
+      "size": [170, 70],
+      "sources": [
+        { "path": "src/service/realmStepV1.ts", "line": 10, "label": "REALM_AGENT_STEP_SCHEMA_VERSION" },
+        { "path": "src/service/realmStepExecutor.ts", "label": "executeRealmAgentStepV1" }
+      ]
+    },
+    {
+      "id": "conv",
+      "type": "backend",
+      "label": "对话轨",
+      "sublabel": "realm-conversation.v1",
+      "pos": [550, 440],
+      "size": [170, 70],
+      "sources": [
+        { "path": "src/service/realmConversationV1.ts", "line": 15, "label": "REALM_CONVERSATION_SCHEMA_VERSION" },
+        { "path": "src/conversation/conversationRunner.ts", "line": 82, "label": "createConversationRunner" }
+      ]
+    },
+    {
+      "id": "loop",
+      "type": "backend",
+      "label": "认知循环",
+      "sublabel": "cognitiveLoop 端口",
+      "pos": [810, 140],
+      "size": [170, 70],
+      "sources": [
+        { "path": "src/loop/cognitiveLoop.ts", "line": 21, "label": "runCognitiveTick" },
+        { "path": "src/ports/ports.ts", "label": "Perception / Memory / Planning" }
+      ]
+    },
+    {
+      "id": "domain",
+      "type": "backend",
+      "label": "认知领域模块",
+      "sublabel": "memory · affect",
+      "pos": [810, 440],
+      "size": [170, 70],
+      "sources": [
+        { "path": "src/memory/retrieval.ts", "label": "记忆召回" },
+        { "path": "src/affect/plotRules.ts", "label": "剧情规则" },
+        { "path": "src/selfConcept/selfConceptRecords.ts", "label": "自我认知" }
+      ]
+    },
+    {
+      "id": "lore",
+      "type": "database",
+      "label": "正史 Canon",
+      "sublabel": "只读版本化常量",
+      "pos": [810, 580],
+      "size": [170, 70],
+      "sources": [{ "path": "src/lore/elysianRealmCanon.ts", "line": 18, "label": "ELYSIAN_REALM_CANON" }]
+    },
+    {
+      "id": "piSeam",
+      "type": "backend",
+      "label": "pi 接缝",
+      "sublabel": "LlmPort / ReplyPort",
+      "pos": [1070, 280],
+      "size": [170, 90],
+      "sources": [
+        { "path": "src/llm/piAiLlmPort.ts", "line": 56, "label": "createPiAiLlmPort" },
+        { "path": "src/conversation/piConversationReplyPort.ts", "line": 32, "label": "createPiConversationReplyPort" },
+        { "path": "src/service/conversationBootstrap.ts", "line": 110, "label": "createConversationHub" }
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "external",
+      "label": "LLM 供应商",
+      "sublabel": "pi-ai / StreamFn",
+      "pos": [1070, 440],
+      "size": [170, 70],
+      "sources": [{ "path": "package.json", "label": "@earendil-works/pi-ai" }]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Elysian-Realm-agent 宿主进程",
+      "wraps": ["http", "profiles", "host", "state", "tick", "conv", "loop", "domain", "lore", "piSeam"],
+      "pad": 20
+    },
+    {
+      "kind": "security-group",
+      "label": "pi 依赖边界",
+      "wraps": ["piSeam"],
+      "pad": 12
+    }
+  ],
+  "connections": [
+    { "from": "clients", "to": "http", "label": "HTTP / SSE", "variant": "emphasis", "labelAt": [105, 104] },
+    { "from": "http", "to": "host", "label": "宿主方法调用", "variant": "emphasis" },
+    { "from": "host", "to": "profiles", "label": "选择档案", "fromSide": "top", "toSide": "bottom" },
+    { "from": "host", "to": "state", "label": "单事务读写", "fromSide": "bottom", "toSide": "top", "labelAt": [375, 384] },
+    { "from": "host", "to": "tick", "label": "周期到点" },
+    { "from": "host", "to": "conv", "label": "chat 调用" },
+    { "from": "tick", "to": "loop", "label": "驱动", "variant": "dashed" },
+    { "from": "conv", "to": "domain", "label": "召回 + 分析" },
+    { "from": "loop", "to": "piSeam", "label": "PlanningPort", "variant": "dashed" },
+    { "from": "domain", "to": "piSeam", "label": "回复生成", "variant": "dashed" },
+    { "from": "piSeam", "to": "llm", "label": "模型调用", "variant": "emphasis", "labelAt": [1155, 384] },
+    { "from": "domain", "to": "lore", "label": "只读检索", "fromSide": "bottom", "toSide": "top", "labelAt": [895, 524] }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "双轨职责",
+      "items": [
+        "确定性 tick 走 realm-agent-step.v1，只在周期到点时触发",
+        "对话走 realm-conversation.v1，单轮无状态、由宿主决定落库",
+        "两轨共享同一记忆流与情感快照，各自保持单一事实来源"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "宿主权威",
+      "items": [
+        "服务只返回 proposal / memoryWrites / affinityDelta / mood 建议",
+        "宿主决定是否应用，包内永不直接改世界状态",
+        "档案按 profileId 隔离，切换后已发出的异步结果作废"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "边界与依赖",
+      "items": [
+        "pi 代码只经 ./llm/pi-ai、./conversation/pi、./service/bootstrap 进入",
+        "时间一律由调用方传入 at / now，核心不生成时间",
+        "正史 Canon 只读注入，不写入角色经历记忆"
+      ]
+    }
+  ]
+}

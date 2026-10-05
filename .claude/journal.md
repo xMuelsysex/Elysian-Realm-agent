@@ -1,5 +1,47 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-09-19 简历项目经历（repo2resume）
+
+- 需求：把本项目写成简历项目经历。按 `repo2resume` skill 执行：四路并行只读深扫（架构与设计 / 工程实践 / 性能与优化 / 业务与难点）→ 汇总事实与候选亮点 → 产出文本。
+- 证据校验：我自己跑了 `npm run typecheck`（通过）与 `npm test`（tests 305 / pass 305 / fail 0）；并行深扫独立重跑 `bench:locomo`，召回率与 `docs/adr/0002` 逐点一致。
+- 口径纠偏（写材料时必须遵守）：规模剔除生成语料 `src/lore/elysianRealmDialogue.ts`（169,167 行），手写 src 16,179 行；「共用 BM25」只能限定为共享打分模块，`loreDialogueRetrieval` 仍是覆盖率达分；「tick 轨无 LLM」只能限定为 service 侧 step 执行器（宿主夜间反思才用 LLM planner）；20k 检索延迟两处记录不一致（ADR 200.9 ms / 本次 255 ms），不取最好值。
+- 深扫副产物（未修复，已定位）：宿主每轮对话经 `state.memoriesFor()` 全量 clone 后重建 `InMemoryMemoryStore`，其 ID 唯一性校验每次全量重建 Set（`src/memory/inMemoryMemoryStore.ts:161`），8,000 条实测构造 1,510 ms vs 同语料检索 55.9 ms，每翻倍近 ×3.8–5.2。现有 bench 完全绕过该路径。
+- 产出：`.claude/tasks/2026-09-19-resume-project-profile/task.md`（证据与验证记录），简历文本交付在会话中。
+
+## 2026-09-19 整体架构图（archify）
+
+- 产出 `docs/architecture/architecture-overview.{architecture.json,html}`：12 组件 + 2 嵌套 boundary + 12 连接 + 3 卡片，自包含 HTML。
+- 用两个 boundary 把核心不变量画进图里：`region` = 宿主进程整体，`security-group` = pi 依赖边界（仅 `./llm/pi-ai`、`./conversation/pi`、`./service/bootstrap` 三个导出子路径）。
+- 组件 `sources` 锚定 21 处真实代码位置并配 `meta.repository` 固定到 revision `9850d5e`；行号取自该 revision（工作区里 realmHost/realmState 有未提交改动，行号与 dirty 树不同）。
+- **archify showcase 的硬约束（踩坑记录）**：桌面可读性按 `availableDiagramWidth = 930` 折算 `sourceFontPx × 930 / viewBoxWidth ≥ 6`；sublabel preferred 字号 9、tag 是 7，所以写 tag 会把 viewBox 宽度上限压到 1085，本次因此不写 tag，viewBox 定 1280×700。垂直连接的标签默认落点在 from 节点内部，必须显式 `labelAt`。boundary 标题过长会让 title rail 迭代不收敛（`composition/desktop-readability`），标题必须短。
+- 验证：`validate --quality showcase --repo-root .` → 9/9 artifact checks、0 errors / 0 warnings；`deliver` → ok（spec 7334 B / artifact 819284 B）；`visual-check` → 1440×900、1600×1000、1920×1080、2048×1320 四档 overflowX/Y 全 false，最小投影字号 7.43–9 px。感知性复核已看 1440×900 与 2048×1320 截图。
+
+## 2026-09-18 记忆检索升级：BM25 + 英文词干归一化（并发会话收敛）
+
+- **发现并发写入**：工作区里已有另一会话的 `2026-09-18-bm25-retrieval` 任务（新建 `src/text/bm25.ts` + `tokenizeFrequencies`，已接入 `loreRetrieval`，验证记录仍空）。第一版我手写的内联 IDF 加权属重复实现，已删除并改用共享 `src/text/bm25.ts`，保证 BM25 只有一处实现。
+- 改动：`tokenize.ts` 新增 `tokenizeSearchFrequencies`（词频 + 英文剥后缀，原文形式保留）；`bm25.ts` 的 `scoreBm25` 加可选 `Bm25Options{k1,b}`（默认值不变，lore 不受影响）；`memory/retrieval.ts` 文本通道接入共享 BM25 并设 `b=0`。
+- **关键实测结论：记忆流的长度归一化必须关掉**。LoCoMo 证据召回 @10（default / lexical-only）：b=0 → 34.6 / 47.5，b=0.25 → 33.1 / 47.7，b=0.5 → 31.6 / 47.3，b=0.75 → 29.1 / 46.7；合成语料「唯一相关但既旧又不重要」recall@1：b=0 → 95%，b≥0.25 → 20%。记忆流里最长的记录恰好是最具体的记录，长度惩罚压掉的正是值得召回的那些。TF 饱和与 IDF 保留。
+- **提升率**：LoCoMo 证据召回 @1 7.5%→17.9%（+139%）、@10 24.2%→34.6%（+43%）、纯词法 @10 34.2%→47.5%；合成语料 hard 子集 recall@1 75%→100%（MRR 0.750→1.000）；延迟无回归（20k 记忆 200.9 ms、9.2–10.0 µs/条），305 测试与 6 条排序不变量全绿，保真度 100/100、OOC 留出集误报仍 2/17,665。
+- 未做：Mem0 的 embedding 语义通道（部署不连外网）、实体链接与图共现（multi-hop 仍最弱，26.1%）。
+- 文档：`docs/adr/0002-memory-retrieval-bm25.md`（遵循现有 `docs/adr/NNNN-*.md` 约定）。
+
+## 2026-09-15 基准测量：延迟 / 吞吐 / 保真度 / 记忆率核对
+
+- 新增 `scripts/bench.mjs`（延迟/吞吐/保真度/OOC 准确率）与 `scripts/bench-memory.mjs`（记忆命中率/排序不变量/治理退役率/写入边界），`npm run bench` 一条命令跑完；全离线、确定性、不写状态、不访网。
+- 关键数据：记忆检索约 9–11 µs/条线性（100→0.88ms、20k→207ms）；角色可见投影 1.35 µs/条（20k→27ms）；台词检索 605 场景 p50 26.8ms（聊天链路最重的确定性开销）；prompt 组装 p50 0.006ms、均 2,345 B；确定性 tick 0.589 ms/tick、1,699 tick/s、LLM 调用 0 且两次跑字节一致；保真度 100/100；OOC 召回 14/14、正史 17,665 条台词留出集误报 2 条（0.011%）、吞吐 505k 行/s。
+- 记忆率：easy 子集 recall@1 100%、对抗性 hard 子集 75%（衰减来自重要性而非年龄，相关性仅占 50% 权重）；跨角色泄漏 0；排序不变量 6/6 PASS；治理 dry run 候选与期望集合精确一致、apply 退役 4/7=57.1% 且删除 0 行、二次 dry run 归零（幂等）；`engineDiagnostic` 标记写入 2/2 100% 拒收。
+- 基准暴露并修复缺陷：`src/conversation/oocGuard.ts:13` 指令覆盖模式末尾名词组可选，使「我没有忘记之前你说的话」被判 OOC 注入（角色回复被隔离、参与者消息被整条丢弃）。改为末尾名词必需 + 中间 ≤4 字不跨句读间隔，保住「忽略之前的所有指令」召回；新增回归测试。
+- 观察项（未改，待决策）：`retrieveMemoryRecords` 无零分过滤，无重叠查询仍返回 topK（recency/importance 恒正），而 `retrieveLoreEntries` 有零分过滤。
+- 验证：`npm run typecheck` ok、`npm test` 305/305、`node scripts/bench.mjs`、`node scripts/bench-memory.mjs`（不变量 6/6 PASS）。
+- **与 GitHub 同类项目的可比性核对**：新增 `scripts/bench-locomo.mjs`（`npm run bench:locomo`），在公开 LoCoMo（10 对话 / 5,882 轮 / 1,982 带 evidence 问题）上测纯检索证据召回，0 次 LLM 调用：默认权重 recall@1/5/10/20 = 7.5/18.2/24.2/32.3%，纯词法 = 15.5/28.3/34.2/41.0%（p50 5.4–5.9 ms）；分类 @10（纯词法）single-hop 49.0%、temporal 48.0%、adversarial 41.1%、multi-hop 14.6%、open-domain 13.5%。对照：Mem0 LoCoMo 92.5 / LongMemEval 94.4（LLM-as-Judge，托管平台，7.0K token，p50 0.88s）、Zep DMR 94.8% vs MemGPT 93.4%、LongMemEval +18.5% 准确率 / -90% 延迟。结论：本项目检索是纯词法 + 加权评分，无 embedding/向量/图索引/实体链接/词干化，英文公开集召回明显弱于语义方案；且默认权重把相关性降到 0.5 在本数据集损失 10 个点召回。数据缓存在 `.bench-data/`（已 gitignore）。
+
+## 2026-09-15 调研驱动三条改造（主动联系 / 记忆流边界 / 记忆失效）
+
+- **她先开口**：新增 `src/host/proactive.ts`（纯函数 `decideProactiveMessage` + LLM 写手）。护栏顺序：开关注入 → 静默时段（本地 22–8 硬约束）→ 未回上限 2 条 → 指数退避（tier 间隔安静 4 天 / 普通 1 天 / 话多 3 小时，× min(2^未回, 4)）→ 素材检查；LLM 只在护栏全过后调用，`SKIP` 可拒绝。消息同时是一条 agent turn + 一条未读记录（`proactive_messages`），participant 回复即已读；页面徽标「🌙 她先说 · N 条未回」+ 「🌙 她先开口」标记。
+- **模板兜底不写记忆流**：`metadata.engineDiagnostic` 标记确定性 plan/reflection；`applyMemoryWrites` / `applyTickMemories` 是单一执法点，拒收并计入 `stats.totals.withheldDiagnostics`；tick 报告带 `withheld` / `diagnostics`（宿主日志 `tick diagnostic:`），并新增「兜底即退化」note：该 tick 没有角色可见的 narrative/reflection 就明说，不让模板日看起来像安静的一天。
+- **失效优于删除**：`invalidAt`/`supersededBy`（老库构造时 ALTER TABLE 补列）；检索记 `excluded: invalidated`、`isCharacterVisibleMemory` 直接 false，所有角色可见投影自动跟随；`POST /v1/host/govern`（默认 dryRun）退役 90 天未用的低重要记忆与历史模板记录。反思证据校验（非空且必须来自本次证据）补了宿主端到端测试。
+- 验证：`npm run typecheck`、`npm test` 304/304（新增 15 例，改写 2 例旧契约）、`npm run verify`（e2e 新增 withheld / proactive / govern 断言全 PASS）；浏览器实测徽标与标记，回复后归零；截图 `.playwright-mcp/chat-proactive.png`。
+
 ## 2026-09-15 Chat 页可见表面 + 头像完整显示
 
 - 主人反馈：确认对话框 / admin 页里成对的按钮背景与底色融为一体；头像只显示了原图左上部分。
