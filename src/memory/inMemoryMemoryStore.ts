@@ -138,8 +138,10 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
   }
 
   private importRecord(record: MemoryRecord<Metadata>): void {
+    // Read id once: a getter or proxy could otherwise desync the index from the stored record.
+    const id = record.id;
     const normalized = validateMemoryWrite(record.agentId, {
-      id: record.id,
+      id,
       kind: record.kind,
       content: record.content,
       createdAt: record.createdAt,
@@ -160,10 +162,10 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
     if (record.supersededBy !== undefined && record.supersededBy.trim().length === 0) {
       throw new MemoryValidationError(["record.supersededBy must be a non-empty string"]);
     }
-    assertUniqueMemoryId(this.knownIds, record.id);
+    assertUniqueMemoryId(this.knownIds, id);
 
     this.records.push({
-      id: record.id,
+      id,
       agentId: record.agentId,
       kind: normalized.kind,
       content: normalized.content,
@@ -179,7 +181,7 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
       ...(record.supersededBy !== undefined ? { supersededBy: record.supersededBy } : {}),
       metadata: normalized.metadata,
     });
-    this.knownIds.add(record.id);
+    this.knownIds.add(id);
   }
 
   private generateId(): string {
