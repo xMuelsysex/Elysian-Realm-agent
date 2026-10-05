@@ -16,7 +16,7 @@ import { TEST_PAGE_HTML } from "../src/host/testPage.js";
 import { ADMIN_PAGE_HTML } from "../src/service/adminPage.js";
 import { RealmHost, periodOf } from "../src/host/realmHost.js";
 import { RealmProfileManager } from "../src/host/realmProfiles.js";
-import { RealmStateStore, RealmStateError } from "../src/host/realmState.js";
+import { isEngineDiagnosticRecord, RealmStateStore, RealmStateError } from "../src/host/realmState.js";
 
 const AGENT_ID = "agent_elysia";
 
@@ -370,7 +370,7 @@ test("periodOf maps the real clock onto realm periods", () => {
   assert.equal(periodOf(3), "night");
 });
 
-test("ticks run on period changes and accumulate routine memories", async () => {
+test("ticks keep deterministic templates out of the memory stream", async () => {
   const dir = tempDataDir();
   const state = new RealmStateStore(dir);
   // Local-time constructor: periodOf follows the host's wall clock.
@@ -380,25 +380,39 @@ test("ticks run on period changes and accumulate routine memories", async () => 
   const first = await host.tickIfPeriodChanged();
   assert.ok(first, "first check runs a tick");
   assert.equal(first.period, "morning");
-  assert.ok(first.added > 0, "tick produces routine memories");
   assert.equal(first.narratives, 0, "no llm means no narratives");
+  // The step still runs and still plans: its template text is reported as a
+  // diagnostic, and the memory stream refuses it.
+  assert.ok(first.withheld > 0, "the step's template records are withheld");
+  assert.ok(first.diagnostics.length > 0, "the withheld text stays visible for logs");
+  assert.ok(
+    !state.memoriesFor(AGENT_ID).some((record) => isEngineDiagnosticRecord(record)),
+    "no engine diagnostic record reaches the stream",
+  );
+  assert.ok(
+    !state.memoriesFor(AGENT_ID).some((record) => /留在今天的记忆里|我把今天的安排记下了/.test(record.content)),
+    "no deterministic template text reaches the stream",
+  );
+  assert.ok(
+    first.notes.some((note) => note.includes("no character-visible memory")),
+    "a template-only tick reports the degradation instead of looking quiet",
+  );
 
   const skipped = await host.tickIfPeriodChanged();
   assert.equal(skipped, undefined, "same period does not tick again");
 
-  const before = state.memoriesFor(AGENT_ID).length;
   clock = new Date(2026, 6, 26, 13, 0, 0);
   const second = await host.tickIfPeriodChanged();
-  assert.ok(second && second.added > 0, "period change ticks again");
+  assert.ok(second, "period change ticks again");
   assert.equal(second.period, "day");
-  assert.ok(state.memoriesFor(AGENT_ID).length > before);
-
-  // Tick memories survive a reload.
-  const restored = new RealmStateStore(dir);
-  assert.equal(restored.memoriesFor(AGENT_ID).length, state.memoriesFor(AGENT_ID).length);
+  assert.ok(second.withheld > 0);
+  assert.ok(
+    !state.memoriesFor(AGENT_ID).some((record) => isEngineDiagnosticRecord(record)),
+  );
 
   // Restart safety: a fresh host over the same data dir must not double-tick
   // the same (date, period) — the tick state is persisted.
+  const restored = new RealmStateStore(dir);
   const restartedHost = new RealmHost(restored, () => undefined, { now: () => clock });
   assert.equal(await restartedHost.tickIfPeriodChanged(), undefined);
 });
@@ -467,6 +481,34 @@ test("host stats reports retention diagnostics for governance decisions", () => 
   assert.equal(agent.oldestMemoryAt, "2026-03-01T12:00:00.000Z");
   assert.equal(agent.staleMemories, 1, "the 5-month-old unused memory is a prune candidate");
   assert.equal(stats.totals.staleMemories, 1);
+});
+
+test("the memory stream refuses engine diagnostic records", () => {
+  const now = "2026-07-26T12:00:00.000Z";
+  const state = new RealmStateStore(tempDataDir());
+  const written = state.applyMemoryWrites(AGENT_ID, [
+    {
+      kind: "observation",
+      content: "午餐后的图书馆很安静。",
+      createdAt: now,
+      importance: 4,
+      sourceIds: [AGENT_ID],
+      metadata: { source: "engine" },
+    },
+    {
+      kind: "reflection",
+      content: "我把在花园里照料向日葵。留在今天的记忆里，之后再看看它会带来什么变化。",
+      createdAt: now,
+      importance: 6,
+      sourceIds: [AGENT_ID],
+      metadata: { source: "engine", reflectionSource: "deterministic", engineDiagnostic: true },
+    },
+  ]);
+
+  assert.equal(written.length, 1, "only the lived record is persisted");
+  assert.equal(state.memoriesFor(AGENT_ID).length, 1);
+  assert.equal(state.withheldDiagnosticCount(), 1, "the refused template is counted, never silently dropped");
+  assert.equal(state.stats(now).totals.withheldDiagnostics, 1);
 });
 
 test("host api serves store stats", async () => {

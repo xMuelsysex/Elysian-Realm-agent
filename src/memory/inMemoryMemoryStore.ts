@@ -90,6 +90,33 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
     };
   }
 
+  /**
+   * Retire records without deleting them: an invalidated memory stays readable
+   * for provenance but never comes back through retrieval or a projection.
+   */
+  invalidate(
+    agentId: string,
+    memoryIds: readonly string[],
+    at: string,
+    supersededBy?: string,
+  ): number {
+    const targets = new Set(memoryIds);
+    let changed = 0;
+    for (let index = 0; index < this.records.length; index += 1) {
+      const record = this.records[index];
+      if (record.agentId !== agentId || !targets.has(record.id) || record.invalidAt !== undefined) {
+        continue;
+      }
+      this.records[index] = {
+        ...record,
+        invalidAt: at,
+        ...(supersededBy !== undefined ? { supersededBy } : {}),
+      };
+      changed += 1;
+    }
+    return changed;
+  }
+
   private touchSelected(memoryIds: readonly string[], now: string): void {
     const selectedIds = new Set(memoryIds);
     for (let index = 0; index < this.records.length; index += 1) {
@@ -125,6 +152,12 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
     if (typeof record.lastAccessedAt !== "string" || Number.isNaN(Date.parse(record.lastAccessedAt))) {
       throw new MemoryValidationError(["record.lastAccessedAt must be a valid ISO date string"]);
     }
+    if (record.invalidAt !== undefined && Number.isNaN(Date.parse(record.invalidAt))) {
+      throw new MemoryValidationError(["record.invalidAt must be a valid ISO date string"]);
+    }
+    if (record.supersededBy !== undefined && record.supersededBy.trim().length === 0) {
+      throw new MemoryValidationError(["record.supersededBy must be a non-empty string"]);
+    }
     assertUniqueMemoryId(new Set(this.records.map((existingRecord) => existingRecord.id)), record.id);
 
     this.records.push({
@@ -140,6 +173,8 @@ export class InMemoryMemoryStore<Metadata = Record<string, unknown>> {
       visibility: normalized.visibility,
       tags: [...normalized.tags],
       ...(normalized.emotion !== undefined ? { emotion: { ...normalized.emotion } } : {}),
+      ...(record.invalidAt !== undefined ? { invalidAt: record.invalidAt } : {}),
+      ...(record.supersededBy !== undefined ? { supersededBy: record.supersededBy } : {}),
       metadata: normalized.metadata,
     });
   }

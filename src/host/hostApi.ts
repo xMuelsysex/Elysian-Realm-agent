@@ -12,6 +12,7 @@ import type { RealmHost } from "./realmHost.js";
 
 const HISTORY_PREFIX = "/v1/host/history/";
 const PROFILE_HISTORY_PREFIX = "/v1/host/profile-history/";
+const PROACTIVE_PREFIX = "/v1/host/proactive/";
 
 export function createHostApiHandler(host: RealmHost): AdminRequestHandler {
   return async (method, path, body): Promise<AdminRequestResult | undefined> => {
@@ -98,6 +99,37 @@ export function createHostApiHandler(host: RealmHost): AdminRequestHandler {
       }
     }
 
+    if (method === "GET" && path.startsWith(PROACTIVE_PREFIX)) {
+      const segments = path.slice(PROACTIVE_PREFIX.length).split("/");
+      if (segments.length !== 2) return badRequest("profileId and agentId are required");
+      const profileId = decodePathSegment(segments[0], "profileId");
+      const agentId = decodePathSegment(segments[1], "agentId");
+      if (typeof profileId !== "string") return profileId;
+      if (typeof agentId !== "string") return agentId;
+      try {
+        return { status: 200, body: host.proactiveInspection(agentId, profileId) };
+      } catch (error) {
+        return badRequest(errorText(error));
+      }
+    }
+
+    if (path === "/v1/host/proactive/read" && method === "POST") {
+      if (!isRecord(body)) {
+        return badRequest("request body must be a JSON object");
+      }
+      if (typeof body.agentId !== "string" || body.agentId.trim().length === 0) {
+        return badRequest("agentId is a required non-empty string");
+      }
+      const profileId = optionalProfileId(body.profileId);
+      if (profileId.error !== undefined) return badRequest(profileId.error);
+      try {
+        const cleared = host.markProactiveRead(body.agentId, profileId.value);
+        return { status: 200, body: { agentId: body.agentId, profileId: profileId.value, cleared } };
+      } catch (error) {
+        return badRequest(errorText(error));
+      }
+    }
+
     if (path === "/v1/host/new-conversation" && method === "POST") {
       if (!isRecord(body)) {
         return badRequest("request body must be a JSON object");
@@ -110,6 +142,27 @@ export function createHostApiHandler(host: RealmHost): AdminRequestHandler {
       try {
         const cleared = host.newConversation(body.agentId, profileId.value);
         return { status: 200, body: { agentId: body.agentId, profileId: profileId.value, cleared } };
+      } catch (error) {
+        return badRequest(errorText(error));
+      }
+    }
+
+    if (path === "/v1/host/govern" && method === "POST") {
+      if (body !== undefined && !isRecord(body)) {
+        return badRequest("request body must be a JSON object when present");
+      }
+      const record = (body ?? {}) as Record<string, unknown>;
+      if (record.dryRun !== undefined && typeof record.dryRun !== "boolean") {
+        return badRequest("dryRun must be a boolean");
+      }
+      const profileId = optionalProfileId(record.profileId);
+      if (profileId.error !== undefined) return badRequest(profileId.error);
+      try {
+        // Dry run unless the caller explicitly asks for the change.
+        return {
+          status: 200,
+          body: host.govern({ dryRun: record.dryRun !== false, profileId: profileId.value }),
+        };
       } catch (error) {
         return badRequest(errorText(error));
       }

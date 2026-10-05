@@ -184,27 +184,63 @@ try {
   );
   if (affectValence <= 0.2) exitCode = 1;
 
-  // ── nightly loop: tick routines + narrative (+ reflection at night) ───
-  // Fresh data dir: startup tick writes 2 routine memories, the narrative 1,
-  // plus 2 conversation memories from the chats above. The reflection only
-  // runs when the local period is "night" (22-5) — when it does, +1 more.
+  // ── nightly loop: narrative (+ reflection at night), templates withheld ─
+  // Fresh data dir: the startup tick withholds its deterministic templates from
+  // the memory stream, the narrative adds 1, and the 2 chats above add 2. The
+  // reflection only runs when the local period is "night" (22-5) — then +1.
   const localHour = new Date().getHours();
   const isNight = localHour >= 22 || localHour < 6;
-  const expected = isNight ? 6 : 5;
+  const expected = isNight ? 4 : 3;
   let memories = 0;
+  let withheld = 0;
   for (let i = 0; i < 40; i++) {
     const statsRes = await fetch(`http://127.0.0.1:${port}/v1/host/stats`);
     const stats = await statsRes.json();
     memories = stats.totals?.memories ?? 0;
+    withheld = stats.totals?.withheldDiagnostics ?? 0;
     if (memories >= expected) break;
     await sleep(500);
   }
   results.push(
     memories >= expected
-      ? `PASS nightly loop persisted ${memories} memories (tick + narrative${isNight ? " + reflection" : ""} + chat)`
+      ? `PASS nightly loop persisted ${memories} memories (narrative${isNight ? " + reflection" : ""} + chat, templates withheld)`
       : `FAIL nightly loop: expected >= ${expected} memories, got ${memories}`,
   );
   if (memories < expected) exitCode = 1;
+  results.push(
+    withheld > 0
+      ? `PASS deterministic templates stayed out of the memory stream (${withheld} withheld)`
+      : `FAIL engine templates were not withheld (withheld=${withheld})`,
+  );
+  if (withheld <= 0) exitCode = 1;
+
+  // ── proactive channel: deterministic guards answer, unread is accounted ─
+  const proactiveRes = await fetch(`http://127.0.0.1:${port}/v1/host/proactive/user_master/agent_elysia`);
+  const proactive = await proactiveRes.json();
+  const guardOk = proactiveRes.status === 200 && typeof proactive.decision?.reason === "string";
+  results.push(
+    guardOk
+      ? `PASS proactive guards answered (reason=${proactive.decision.reason}, unread=${proactive.unread?.length ?? 0})`
+      : `FAIL proactive channel: ${JSON.stringify(proactive).slice(0, 140)}`,
+  );
+  if (!guardOk) exitCode = 1;
+
+  // ── governance: invalidation-first, dry run unless asked ──────────────
+  const dryRunRes = await fetch(`http://127.0.0.1:${port}/v1/host/govern`, { method: "POST" });
+  const dryRun = await dryRunRes.json();
+  const applyRes = await fetch(`http://127.0.0.1:${port}/v1/host/govern`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ dryRun: false }),
+  });
+  const governApplied = await applyRes.json();
+  const governOk = dryRun.dryRun === true && governApplied.dryRun === false;
+  results.push(
+    governOk
+      ? `PASS govern defaults to a dry run and applies on request (candidates=${JSON.stringify(governApplied.candidates)})`
+      : `FAIL govern semantics: ${JSON.stringify({ dryRun, governApplied }).slice(0, 160)}`,
+  );
+  if (!governOk) exitCode = 1;
 
   // ── reflection seam: the stub must serve a valid insights array ──────
   // The host only reflects at night, so probe the stub directly to keep the

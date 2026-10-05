@@ -37,6 +37,7 @@ export const CHAT_PAGE_HTML = `<!doctype html>
   #profilePicker, #agentPicker, #plotType { font: inherit; padding: .3rem .5rem; border-radius: 6px; border: 1px solid color-mix(in srgb, currentColor 35%, transparent); background: color-mix(in srgb, currentColor 8%, transparent); color: inherit; }
   #profilePicker, #agentPicker { max-width: 10rem; }
   #badge { font-size: .82rem; opacity: .85; text-align: right; line-height: 1.4; white-space: nowrap; }
+  #proactiveHint { color: #d6336c; font-weight: 600; }
   #settingsLink, #testLink, #newChat { color: inherit; text-decoration: none; padding: .3rem .55rem; border: 1px solid color-mix(in srgb, currentColor 35%, transparent); border-radius: 6px; background: color-mix(in srgb, currentColor 8%, transparent); white-space: nowrap; }
   #settingsLink:hover, #testLink:hover, #newChat:hover { background: color-mix(in srgb, currentColor 18%, transparent); }
   #newChat:disabled { opacity: .5; cursor: wait; }
@@ -171,7 +172,11 @@ function heart(affinity) {
 function renderBadge(agent) {
   const moodText = agent.mood ? \`\${agent.mood.mood}\` : "平静";
   const emotionText = agent.affect ? topEmotions(agent.affect) : "—";
-  $("badge").innerHTML = \`\${heart(agent.affinity)} 好感 \${agent.affinity}<br>心情 \${moodText}<br>情绪 \${emotionText}\`;
+  const unread = Number(agent.proactiveUnread ?? 0);
+  const proactiveText = unread > 0
+    ? \`<br><span id="proactiveHint">🌙 她先说 · \${unread} 条未回</span>\`
+    : "";
+  $("badge").innerHTML = \`\${heart(agent.affinity)} 好感 \${agent.affinity}<br>心情 \${moodText}<br>情绪 \${emotionText}\${proactiveText}\`;
 }
 
 function appendText(parent, tag, className, text) {
@@ -371,6 +376,17 @@ function userAvatar() {
   return avatarNode(profile?.displayName ?? "我", activeProfileId ?? "user");
 }
 
+// Answering retires the pending openers: the badge clears on the host and the
+// transcript markers stop claiming she is still waiting.
+function clearProactivePending() {
+  current.proactiveUnread = 0;
+  for (const marker of document.querySelectorAll("#log .row.sys .bubble")) {
+    if (marker.textContent.trim() === "🌙 她先开口 · 还没回") {
+      marker.textContent = "🌙 她先开口";
+    }
+  }
+}
+
 function bubble(cls, text, avatar) {
   const row = document.createElement("div");
   row.className = "row " + cls;
@@ -464,12 +480,26 @@ async function loadAgent(agent, generation = ++viewGeneration, profileId = activ
   $("title").textContent = agent.displayName;
   renderBadge(agent);
   $("log").innerHTML = "";
-  const { body } = await api("/v1/host/profile-history/" + encodeURIComponent(profileId) + "/" + encodeURIComponent(agent.agentId));
+  const [historyResult, proactiveResult] = await Promise.all([
+    api("/v1/host/profile-history/" + encodeURIComponent(profileId) + "/" + encodeURIComponent(agent.agentId)),
+    api("/v1/host/proactive/" + encodeURIComponent(profileId) + "/" + encodeURIComponent(agent.agentId)),
+  ]);
   if (activeProfileId !== profileId || viewGeneration !== generation) return;
+  const body = historyResult.body;
+  const proactive = proactiveResult.body ?? {};
+  // Her own messages carry the same timestamp as their proactive entry, so the
+  // transcript can mark the ones she opened with instead of replying.
+  const openedWith = new Set((proactive.recent ?? []).map((entry) => entry.createdAt));
+  const unanswered = new Set((proactive.unread ?? []).map((entry) => entry.createdAt));
   for (const turn of body.turns ?? []) {
     const fromAgent = turn.role === "agent";
+    if (fromAgent && turn.at && openedWith.has(turn.at)) {
+      bubble("sys", unanswered.has(turn.at) ? "🌙 她先开口 · 还没回" : "🌙 她先开口");
+    }
     bubble(fromAgent ? "agent" : "user", turn.content, fromAgent ? agentAvatar(agent) : userAvatar());
   }
+  current.proactiveUnread = (proactive.unread ?? []).length;
+  renderBadge(current);
   if ((body.turns ?? []).length === 0) {
     bubble("sys", \`和\${agent.displayName}的故事从这里开始～\`);
     if (agent.latestReflection) {
@@ -725,6 +755,8 @@ $("form").addEventListener("submit", async (event) => {
       if (applied) {
         current.affinity = applied.affinity;
         current.mood = applied.mood;
+        // Answering clears her pending openers on the host as well.
+        clearProactivePending();
         renderBadge(current);
         // OOC red-line leaks surface visibly (analysisReason is annotated by
         // the host with "ooc-leak: ..." when the reply broke character).
@@ -743,6 +775,7 @@ $("form").addEventListener("submit", async (event) => {
         bubble("agent", body.reply, agentAvatar(current));
         current.affinity = body.affinity;
         current.mood = body.mood;
+        clearProactivePending();
         renderBadge(current);
         if (body.analysisReason && String(body.analysisReason).includes("ooc-leak")) {
           bubble("sys", "⚠️ " + String(body.analysisReason));

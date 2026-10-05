@@ -50,6 +50,12 @@ import {
   isCharacterVisibleParticipantMessage,
 } from "../conversation/oocGuard.js";
 import type { RealmRoutineConfig, RealmStateStore, RealmStoreStats, RealmPersonaConfig } from "./realmState.js";
+import {
+  isEngineDiagnosticRecord,
+  isEngineTemplateRecord,
+  MEMORY_RETIRE_MIN_IMPORTANCE,
+  MEMORY_STALE_DAYS,
+} from "./realmState.js";
 import { RealmProfileManager, type RealmProfileManagerInput, type RealmProfileSummary } from "./realmProfiles.js";
 import {
   SELF_CONCEPT_AUDIT_SCHEMA_VERSION,
@@ -81,6 +87,16 @@ import {
   type LoreDialogueLineV1,
   type LoreDialogueRetrievalHitV1,
 } from "../lore/loreDialogueRecords.js";
+import {
+  decideProactiveMessage,
+  resolveProactiveConfig,
+  runProactiveMessage,
+  PROACTIVE_MATERIAL_LIMIT,
+  PROACTIVE_RECENT_LIMIT,
+  type ProactiveDecision,
+  type ProactiveMessageInput,
+} from "./proactive.js";
+import type { ProactiveMessageV1 } from "./realmState.js";
 
 const CHAT_HISTORY_WINDOW = 20;
 const RELATIONSHIP_HISTORY_WINDOW = 20;
@@ -107,6 +123,8 @@ export interface RealmAgentSummary {
   mood?: AgentMood;
   affect?: AffectState;
   memoryCount: number;
+  /** Self-initiated messages the participant has not answered yet. */
+  proactiveUnread: number;
   /** The agent's most recent nightly reflection, when one exists. */
   latestReflection?: string;
 }
@@ -205,11 +223,26 @@ export interface RealmHostOptions {
   loreDialogue?: LoreDialogueCatalogV1;
 }
 
+/** Outcome of a governance pass: what was eligible, and what actually changed. */
+export interface RealmGovernReport {
+  profileId: string;
+  dryRun: boolean;
+  at: string;
+  candidates: { stale: number; engineTemplates: number };
+  invalidated: { stale: number; engineTemplates: number };
+}
+
 export interface RealmTickReport {
   period: RealmRoutinePeriodV1;
   added: number;
   narratives: number;
   reflections: number;
+  /** Self-initiated messages the tick sent out. */
+  proactive: number;
+  /** Engine diagnostic records the tick tried to write and the stream refused. */
+  withheld: number;
+  /** The withheld template text itself, for logs and diagnostics surfaces. */
+  diagnostics: readonly string[];
   /** Non-fatal problems (narrative/reflection failures), for logging. */
   notes: readonly string[];
 }
@@ -525,7 +558,9 @@ export class RealmHost {
         affinity: state.relationship(agent.agentId)?.affinity ?? 0,
         mood: state.mood(agent.agentId),
         affect: state.affectState(agent.agentId),
-        memoryCount: memories.length,
+        // Retired memories stay stored as provenance but are not memories she has.
+        memoryCount: memories.filter((record) => record.invalidAt === undefined).length,
+        proactiveUnread: state.unreadProactiveMessages(agent.agentId).length,
         ...(latestReflection !== undefined ? { latestReflection } : {}),
       };
     });
@@ -564,6 +599,49 @@ export class RealmHost {
     const state = this.stateFor(profileId);
     state.agent(agentId);
     return state.historyFor(agentId, limit);
+  }
+
+  /**
+   * Memory governance: retire long-unused low-importance memories and the
+   * engine's own template records. Invalidation, never deletion — the rows stay
+   * as provenance and the report says what changed. Dry run by default.
+   */
+  govern(options: { dryRun: boolean; profileId?: string }): RealmGovernReport {
+    const state = this.stateFor(options.profileId);
+    const at = this.now().toISOString();
+    const staleBefore = new Date(Date.parse(at) - MEMORY_STALE_DAYS * 86_400_000).toISOString();
+    const candidates = { stale: 0, engineTemplates: 0 };
+    const invalidated = { stale: 0, engineTemplates: 0 };
+    for (const agent of state.config.agents) {
+      const staleIds: string[] = [];
+      const templateIds: string[] = [];
+      for (const record of state.memoriesFor(agent.agentId)) {
+        if (record.invalidAt !== undefined) {
+          continue;
+        }
+        if (isEngineTemplateRecord(record)) {
+          templateIds.push(record.id);
+          continue;
+        }
+        if (record.importance < MEMORY_RETIRE_MIN_IMPORTANCE && record.lastAccessedAt < staleBefore) {
+          staleIds.push(record.id);
+        }
+      }
+      candidates.stale += staleIds.length;
+      candidates.engineTemplates += templateIds.length;
+      if (options.dryRun) {
+        continue;
+      }
+      invalidated.stale += state.invalidateMemories(agent.agentId, staleIds, at);
+      invalidated.engineTemplates += state.invalidateMemories(agent.agentId, templateIds, at);
+    }
+    return {
+      profileId: state.config.user.participantId,
+      dryRun: options.dryRun,
+      at,
+      candidates,
+      invalidated,
+    };
   }
 
   /**
@@ -851,6 +929,8 @@ export class RealmHost {
     );
     if (leak === undefined) {
       this.applyConversationEmotion(request.agent.agentId, response.affect.emotion, now, state);
+      // The participant answered: whatever she had opened with is no longer pending.
+      state.markProactiveRead(request.agent.agentId, now);
     }
     return { applied, ...(leak !== undefined ? { leak } : {}) };
   }
@@ -880,6 +960,9 @@ export class RealmHost {
       added: reports.reduce((total, report) => total + report.added, 0),
       narratives: reports.reduce((total, report) => total + report.narratives, 0),
       reflections: reports.reduce((total, report) => total + report.reflections, 0),
+      proactive: reports.reduce((total, report) => total + report.proactive, 0),
+      withheld: reports.reduce((total, report) => total + report.withheld, 0),
+      diagnostics: reports.flatMap((report) => report.diagnostics),
       notes: reports.flatMap((report) => report.notes),
     };
   }
@@ -896,13 +979,44 @@ export class RealmHost {
     }
     const storyGeneration = state.storyGeneration();
     this.ensureAffectInitialized(state, date);
-    const added = this.runTick(period, date, state);
+    const withheldBefore = state.withheldDiagnosticCount();
+    const { added, diagnostics } = this.runTick(period, date, state);
     this.runScriptedPlot(period, date, state);
     state.setTickState({ date: localDate, period });
     const notes: string[] = [];
     const narratives = await this.runNarratives(period, date, notes, state, storyGeneration);
     const reflections = period === "night" ? await this.runDailyReflection(date, notes, state, storyGeneration) : 0;
-    return { period, added, narratives, reflections, notes };
+    const proactive = await this.runProactiveMessages(period, date, notes, state, storyGeneration);
+    const withheld = state.withheldDiagnosticCount() - withheldBefore;
+    this.noteDegradedTick(period, date, notes, state);
+    return { period, added, narratives, reflections, proactive, withheld, diagnostics, notes };
+  }
+
+  /**
+   * "Fallback means degradation": a tick that produced no character-visible
+   * memory only moved deterministic templates, which the memory stream refuses.
+   * Say so out loud — otherwise a template-only day looks like a quiet one.
+   */
+  private noteDegradedTick(
+    period: RealmRoutinePeriodV1,
+    date: Date,
+    notes: string[],
+    state: RealmStateStore,
+  ): void {
+    const now = date.toISOString();
+    // "Lived" means a narrative or a reflection: scripted plot labels and
+    // deterministic templates are not a day she actually had.
+    const degraded = state.config.agents
+      .filter((agent) => !state.memoriesFor(agent.agentId).some((record) =>
+        record.createdAt === now &&
+        isCharacterVisibleMemory(record) &&
+        (record.kind === "reflection" || record.tags.includes("life-narrative"))))
+      .map((agent) => agent.agentId);
+    if (degraded.length > 0) {
+      notes.push(
+        `tick ${period}: ${degraded.join(", ")} produced no character-visible memory (deterministic templates withheld from the memory stream)`,
+      );
+    }
   }
 
   private async runNarratives(
@@ -992,6 +1106,179 @@ export class RealmHost {
       }
     }
     return written;
+  }
+
+  /**
+   * Let an agent open the conversation herself. Every guard is deterministic
+   * and runs first — quiet hours, the tier interval, exponential backoff while
+   * her last message went unanswered, an unanswered cap, and a material check —
+   * so "do not disturb" never depends on a model's judgement. The LLM only
+   * writes the words: without one, or on failure, she simply stays quiet.
+   */
+  private async runProactiveMessages(
+    period: RealmRoutinePeriodV1,
+    date: Date,
+    notes: string[],
+    state: RealmStateStore,
+    storyGeneration: number,
+  ): Promise<number> {
+    const now = date.toISOString();
+    let sent = 0;
+    for (const agent of state.config.agents) {
+      const config = resolveProactiveConfig(agent.proactive);
+      const material = this.proactiveMaterial(state, agent.agentId);
+      const decision = decideProactiveMessage({
+        enabled: config.enabled,
+        now: date,
+        tier: config.tier,
+        ...this.proactiveBackoff(state, agent.agentId),
+        hasMaterial: material.length > 0,
+      });
+      if (!decision.send) {
+        continue;
+      }
+      const llm = this.llm();
+      if (!llm) {
+        notes.push(`${agent.agentId}: proactive message skipped — no conversation llm configured`);
+        continue;
+      }
+      if (state.storyGeneration() !== storyGeneration) {
+        notes.push(`${agent.agentId}: proactive message discarded after story changed`);
+        return sent;
+      }
+      const affect = state.affectState(agent.agentId);
+      const localDay = now.slice(0, 10);
+      const dayHistory = state.relationshipHistory(agent.agentId, `${localDay}T00:00:00.000Z`);
+      const relationshipArc =
+        dayHistory.length >= 2 && dayHistory[0].affinity !== dayHistory[dayHistory.length - 1].affinity
+          ? `Relationship today: your bond with ${state.config.user.displayName} moved from ${dayHistory[0].affinity} to ${dayHistory[dayHistory.length - 1].affinity} (scale -100..100).`
+          : undefined;
+      const loreQuery = material.map((record) => record.content).join("\n");
+      const loreHits = retrieveLoreEntries(this.availableSummaryLore(), {
+        agentId: agent.agentId,
+        text: loreQuery,
+        topK: DEFAULT_LORE_RETRIEVAL_TOP_K,
+      }).hits;
+      const storyContext = this.storyContextFor(state, agent, loreQuery);
+      const input: ProactiveMessageInput = {
+        agentId: agent.agentId,
+        displayName: agent.displayName,
+        personaId: agent.personaId,
+        persona: agent.persona,
+        participantName: state.config.user.displayName,
+        now,
+        period,
+        material: material.map((record) => record.content),
+        recentMessages: state
+          .proactiveMessages(agent.agentId, PROACTIVE_RECENT_LIMIT)
+          .map((message) => message.content),
+        ...(affect !== undefined ? { affect } : {}),
+        ...(relationshipArc !== undefined ? { relationshipArc } : {}),
+        loreHits,
+        storyContext,
+        selfConcept: state.getSelfConceptSnapshot(agent.agentId),
+      };
+      const result = await runProactiveMessage(llm, input);
+      if (state.storyGeneration() !== storyGeneration) {
+        notes.push(`${agent.agentId}: proactive message discarded after story changed`);
+        return sent;
+      }
+      if ("skipped" in result) {
+        // The writer declined: expected and silent, the material stays for later.
+        continue;
+      }
+      if ("error" in result) {
+        notes.push(`${agent.agentId}: ${result.error}`);
+        continue;
+      }
+      // The message is both a transcript turn — so her next reply knows she
+      // said it — and an unread entry, which the backoff guard measures.
+      state.applyConversation(
+        agent.agentId,
+        { turns: [{ role: "agent", content: result.content, at: now }], memoryWrites: [] },
+        now,
+      );
+      state.appendProactiveMessage(agent.agentId, {
+        content: result.content,
+        createdAt: now,
+        trigger: decision.reason,
+      });
+      sent += 1;
+    }
+    return sent;
+  }
+
+  /** Her last message and how many of them went unanswered. */
+  private proactiveBackoff(
+    state: RealmStateStore,
+    agentId: string,
+  ): { lastProactiveAt?: string; unanswered: number } {
+    const messages = state.proactiveMessages(agentId);
+    const last = messages[messages.length - 1];
+    const lastParticipantAt = [...state.historyFor(agentId)]
+      .reverse()
+      .find((turn) => turn.role === "participant")?.at;
+    const unanswered = messages.filter(
+      (message) => lastParticipantAt === undefined || message.createdAt > lastParticipantAt,
+    ).length;
+    return {
+      ...(last !== undefined ? { lastProactiveAt: last.createdAt } : {}),
+      unanswered,
+    };
+  }
+
+  /** Character-visible moments she can talk about, written since she last spoke. */
+  private proactiveMaterial(
+    state: RealmStateStore,
+    agentId: string,
+  ): readonly MemoryRecord<RealmMemoryMetadataV1>[] {
+    const messages = state.proactiveMessages(agentId, 1);
+    const lastAt = messages[messages.length - 1]?.createdAt;
+    return state
+      .memoriesFor(agentId)
+      .filter((record) => record.kind === "observation" || record.kind === "reflection")
+      .filter(isCharacterVisibleMemory)
+      .filter((record) => lastAt === undefined || record.createdAt > lastAt)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .slice(-PROACTIVE_MATERIAL_LIMIT);
+  }
+
+  /**
+   * Read-only view of the proactive channel, including why she is or is not
+   * speaking right now — the "why did she stay quiet" surface.
+   */
+  proactiveInspection(agentId: string, profileId?: string): {
+    agentId: string;
+    profileId: string;
+    unread: readonly ProactiveMessageV1[];
+    recent: readonly ProactiveMessageV1[];
+    decision: ProactiveDecision;
+  } {
+    const state = this.stateFor(profileId);
+    const agent = state.agent(agentId);
+    const config = resolveProactiveConfig(agent.proactive);
+    const date = this.now();
+    const decision = decideProactiveMessage({
+      enabled: config.enabled,
+      now: date,
+      tier: config.tier,
+      ...this.proactiveBackoff(state, agentId),
+      hasMaterial: this.proactiveMaterial(state, agentId).length > 0,
+    });
+    return {
+      agentId,
+      profileId: state.config.user.participantId,
+      unread: state.unreadProactiveMessages(agentId),
+      recent: state.proactiveMessages(agentId, PROACTIVE_RECENT_LIMIT),
+      decision,
+    };
+  }
+
+  /** The participant answered: her pending messages count as read. */
+  markProactiveRead(agentId: string, profileId?: string): number {
+    const state = this.stateFor(profileId);
+    state.agent(agentId);
+    return state.markProactiveRead(agentId, this.now().toISOString());
   }
 
   private async runDailyReflection(
@@ -1287,7 +1574,10 @@ export class RealmHost {
     }
   }
 
-  private runTick(period: RealmRoutinePeriodV1, date: Date, state: RealmStateStore): number {
+  private runTick(period: RealmRoutinePeriodV1, date: Date, state: RealmStateStore): {
+    added: number;
+    diagnostics: string[];
+  } {
     const now = date.toISOString();
     // Millisecond timestamp keeps stepIds unique even across restarts within
     // the same hour, so executor-generated memory ids can never collide with
@@ -1331,7 +1621,7 @@ export class RealmHost {
       .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined);
 
     if (agents.length === 0) {
-      return 0;
+      return { added: 0, diagnostics: [] };
     }
 
     const result = executeRealmAgentStepV1({
@@ -1342,12 +1632,20 @@ export class RealmHost {
     });
 
     let added = 0;
+    const diagnostics: string[] = [];
     for (const output of result.agents) {
       added += state.applyTickMemories(output.agentId, output.memories);
+      // Deterministic templates are diagnostics: report them here instead of
+      // letting them into the memory stream (see runTick's caller).
+      for (const record of output.memories) {
+        if (record.createdAt === now && isEngineDiagnosticRecord(record)) {
+          diagnostics.push(`${output.agentId}: ${record.content}`);
+        }
+      }
       if (output.affectProposal) {
         state.applyAffectProposal(output.agentId, output.affectProposal, now);
       }
     }
-    return added;
+    return { added, diagnostics };
   }
 }

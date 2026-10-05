@@ -66,8 +66,11 @@ try {
       return;
     }
     console.log(
-      `tick: period=${tick.period}, ${tick.added} memories, ${tick.narratives} narrative(s), ${tick.reflections} reflection(s)`,
+      `tick: period=${tick.period}, ${tick.added} memories, ${tick.narratives} narrative(s), ${tick.reflections} reflection(s), ${tick.proactive} proactive message(s), ${tick.withheld} template diagnostic(s) withheld`,
     );
+    for (const diagnostic of tick.diagnostics) {
+      console.log(`tick diagnostic: ${diagnostic}`);
+    }
     for (const note of tick.notes) {
       console.warn(`tick note: ${note}`);
     }

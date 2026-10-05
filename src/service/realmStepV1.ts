@@ -60,6 +60,12 @@ export interface RealmMemoryMetadataV1 {
   plotType?: string;
   plotTarget?: string;
   reflectionSource?: "deterministic";
+  /**
+   * Marks deterministic template text produced by the engine fallback. It is a
+   * diagnostic of the step, not something the character remembers: the host
+   * keeps it out of the memory stream (see realmState.applyMemoryWrites).
+   */
+  engineDiagnostic?: true;
   conversationId?: string;
   messageId?: string;
   inputId?: string;

@@ -30,7 +30,31 @@
 - 实现链：`ConversationRunner.runStream?(request, onDelta, onReply?)`（可选，无流式能力时单 delta + onReply 回退）→ `piConversationReplyPort.generateReplyStream`（`agent.subscribe` 收 `text_delta`）→ `RealmHost.chatStream` → hostApi。
 - 非 stream 请求返回 JSON 兼容契约（页面自动回退）。
 
+## 主动联系（她先开口）
+
+- 决策全在 `src/host/proactive.ts` 的纯函数 `decideProactiveMessage`：**开关注入（per agent）→ 静默时段（本地 22–8，硬约束）→ 未回上限（2 条）→ 指数退避（tier 基础间隔 × min(2^未回, 4)）→ 素材检查**；注意 LLM 只在全部护栏通过后才被调用，失败/空回/OOC/超长都只是不发。
+- tier 基础间隔：`quiet` 4 天 / `normal` 1 天 / `talkative` 3 小时；realm.json 每 agent 可选 `proactive: {enabled, tier}`，缺省 = `resolveProactiveConfig`（enabled=true, normal），默认配置里两个角色显式写了（爱莉希雅 normal、梅比乌斯 quiet）。
+- 未回计数 = `created_at > 最后一次 participant turn` 的主动消息数；素材 = 上次主动发言之后写入且角色可见的 observation/reflection（所以没有真的过一天就不开口）。
+- 写入：主动消息同时是**一条 agent conversation turn**（下次回复知道她说过）+ 一条 `proactive_messages` 未读记录（退避的度量与页面徽标的数据源）；participant 发消息（走 `applyChatResponse`）时整批置为已读。
+- 接口：`GET /v1/host/proactive/<profileId>/<agentId>` → `{unread, recent, decision}`（带着「为什么发/为什么不发」）；`POST /v1/host/proactive/read`；`/v1/host/state` 摘要带 `proactiveUnread`；tick 报告带 `proactive` 计数（宿主日志一行）。页面：徽标「🌙 她先说 · N 条未回」+ 历史里她的发言上方「🌙 她先开口」标记，回复后两者同时清除。
+
 `POST /v1/host/new-conversation` `{profileId?, agentId}` → `{agentId, profileId?, cleared}`：**开始新的对话**——删除该档案该角色的 `conversations` 行（内存与库同步），返回被清空的轮数。记忆、好感度、心情、自我认知和剧情游标全部保留：对话记录只是活动上下文窗口，不是角色记得的事；清空后 `applyConversation` 从 seq 0 继续追加。
+
+## 记忆流边界（引擎诊断不进记忆流）
+
+- 确定性模板（step 的 plan 文本与确定性 reflection）在 `metadata.engineDiagnostic = true` 标记自己。
+- `RealmStateStore.applyMemoryWrites` / `applyTickMemories` 是**单一执法点**：带标记的写入被拒收并计入 `withheldDiagnosticCount()`（`stats.totals.withheldDiagnostics`），不做静默丢弃。
+- tick 报告带 `withheld` 与 `diagnostics`（模板原文，宿主日志 `tick diagnostic: ...` 输出），方便看见「今天她只跑了模板」。
+- **兜底即退化检查**：每个 tick 后，若某 agent 该 tick 没有任何角色可见的 narrative/reflection，写入 note（`produced no character-visible memory ...`）——不再让模板日看起来像安静的一天。
+
+## 记忆失效（失效优于删除）
+
+- `MemoryRecord.invalidAt` / `supersededBy`（表列 `invalid_at` / `superseded_by`，老库构造时 `ALTER TABLE` 补列）；`InMemoryMemoryStore.invalidate()` + `RealmStateStore.invalidateMemories()` 同步内存与库。
+- 失效即不可召回：`retrieveMemoryRecords` 跳过并记 `excluded: invalidated`；`isCharacterVisibleMemory` 对失效记录直接 false——所有角色可见投影（对话召回、叙事连续性、反思证据、self-concept provenance）自动跟随。
+- `listAgents().memoryCount` 只数存活记录；`stats` 分开暴露 `invalidatedMemories`。
+- 治理入口 `POST /v1/host/govern`：默认 `dryRun=true`；规则与常量见 `.claude/specs/memory-governance.md`。
+
+- **反思强制引用证据**：`reflectionValidation` 要求每条 insight 的 `evidenceMemoryIds` 非空且必须是本次提供的证据之一（未知 id 直接拒绝该条），宿主与 planner 两路均已覆盖（`simulationAgentReflection` / `memoryInvalidation` 测试）。
 
 ## admin 配置语义
 

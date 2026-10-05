@@ -233,6 +233,8 @@ function buildPlanMemoryWrite(
       locationId: proposal.locationId ?? perception.locationId,
       proposalKind: proposal.kind,
       planId: proposal.id,
+      // Template text: it documents the step, it is not a lived memory.
+      engineDiagnostic: true,
     },
   };
 }
@@ -360,6 +362,8 @@ function createDeterministicReflectionPlanner(
               locationId: perception.locationId,
               triggerKind: input.trigger.kind,
               reflectionSource: "deterministic",
+              // Fixed template text, withheld from the memory stream by the host.
+              engineDiagnostic: true,
             },
           },
         ],

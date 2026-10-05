@@ -52,6 +52,11 @@ import {
   PERSONALITY_BIAS_MIN,
 } from "../personality/personalityRules.js";
 import {
+  PROACTIVE_TIERS,
+  isProactiveTier,
+  type RealmProactiveConfig,
+} from "./proactive.js";
+import {
   SELF_CONCEPT_AUDIT_SCHEMA_VERSION,
   SELF_CONCEPT_PROPOSAL_SCHEMA_VERSION,
   SELF_CONCEPT_SNAPSHOT_SCHEMA_VERSION,
@@ -105,6 +110,8 @@ export interface RealmPersonaConfig {
   routines: readonly RealmRoutineConfig[];
   /** Optional scripted plot events, fed automatically on period change. */
   plotScript?: readonly RealmPlotScript[];
+  /** Optional self-initiated contact policy; absent means the documented default. */
+  proactive?: RealmProactiveConfig;
 }
 
 export interface RealmUserConfig {
@@ -163,6 +170,7 @@ export const DEFAULT_REALM_CONFIG: RealmConfig = {
         affectModifiers: { praise: 1.3, criticism: 0.8 },
         emotionResponsiveness: 0.15,
       },
+      proactive: { enabled: true, tier: "normal" },
       plotScript: [
         {
           period: "morning",
@@ -256,6 +264,8 @@ export const DEFAULT_REALM_CONFIG: RealmConfig = {
         affectModifiers: { praise: 0.4, criticism: 1.6 },
         emotionResponsiveness: 0.05,
       },
+      // Mobius speaks up on her own far less often than Elysia does.
+      proactive: { enabled: true, tier: "quiet" },
       routines: [
         {
           period: "morning",
@@ -317,6 +327,27 @@ export interface RealmStoryProgressV1 {
   updatedAt: string;
 }
 
+/** One self-initiated message from an agent, kept out of the reply loop. */
+export interface ProactiveMessageV1 {
+  id: string;
+  agentId: string;
+  content: string;
+  createdAt: string;
+  /** The guard verdict that allowed this message through. */
+  trigger: string;
+  /** When the participant answered; absent while unread. */
+  readAt?: string;
+}
+
+interface ProactiveMessageRow {
+  id: string;
+  agent_id: string;
+  content: string;
+  created_at: string;
+  trigger: string;
+  read_at: string | null;
+}
+
 /** Non-destructive store statistics for growth diagnostics. */
 export interface RealmStoreStats {
   agents: Array<{
@@ -324,19 +355,30 @@ export interface RealmStoreStats {
     displayName: string;
     memories: number;
     conversationTurns: number;
+    /** Self-initiated messages written so far. */
+    proactiveMessages: number;
+    /** Self-initiated messages the participant has not answered. */
+    unreadProactive: number;
     /** Oldest memory creation time, or undefined when the agent has none. */
     oldestMemoryAt?: string;
     /** Memories untouched for at least 90 days — pruning candidates. */
     staleMemories: number;
+    /** Retired memories kept as provenance but never recalled. */
+    invalidatedMemories: number;
   }>;
   totals: {
     memories: number;
     conversationTurns: number;
+    proactiveMessages: number;
+    unreadProactive: number;
     relationships: number;
     relationshipHistoryRows: number;
     moods: number;
     affectStates: number;
     staleMemories: number;
+    invalidatedMemories: number;
+    /** Engine diagnostic records kept out of the memory stream. */
+    withheldDiagnostics: number;
   };
   /** Size of the SQLite store file in bytes. */
   dbBytes: number;
@@ -344,6 +386,43 @@ export interface RealmStoreStats {
 
 /** Memories untouched for at least this long count as stale (prune candidates). */
 export const MEMORY_STALE_DAYS = 90;
+
+/** Governance may retire stale memories only below this importance. */
+export const MEMORY_RETIRE_MIN_IMPORTANCE = 4;
+
+/**
+ * Deterministic template records, marker or legacy form: the engine's own
+ * text, not something the character lived through. isCharacterVisibleMemory
+ * already refuses to hand them back; governance retires them for real.
+ */
+export function isEngineTemplateRecord(record: {
+  kind: string;
+  metadata?: unknown;
+}): boolean {
+  if (isEngineDiagnosticRecord(record)) {
+    return true;
+  }
+  const metadata = typeof record.metadata === "object" && record.metadata !== null
+    ? (record.metadata as { source?: unknown; reflectionSource?: unknown })
+    : {};
+  if (metadata.reflectionSource === "deterministic") {
+    return true;
+  }
+  return record.kind === "plan" && metadata.source === "engine";
+}
+
+/**
+ * Engine diagnostics document a step (deterministic templates, fallback text);
+ * they are not something the character lived through, so the memory stream
+ * refuses them at this boundary. Single enforcement point for every producer.
+ */
+export function isEngineDiagnosticRecord(record: { metadata?: unknown }): boolean {
+  const metadata = record.metadata;
+  if (typeof metadata !== "object" || metadata === null) {
+    return false;
+  }
+  return (metadata as { engineDiagnostic?: unknown }).engineDiagnostic === true;
+}
 
 interface MemoryRow {
   agent_id: string;
@@ -357,6 +436,8 @@ interface MemoryRow {
   related_memory_ids: string;
   visibility: string;
   tags: string;
+  invalid_at: string | null;
+  superseded_by: string | null;
   emotion: string | null;
   metadata: string;
 }
@@ -396,6 +477,7 @@ interface SelfConceptAuditRow {
 interface RealmStateSnapshot {
   memories: MemoryRow[];
   conversations: ConversationRow[];
+  proactiveMessages: ProactiveMessageRow[];
   relationships: Array<{ agent_id: string; target_id: string; affinity: number; updated_at: string }>;
   relationshipHistory: Array<{ agent_id: string; target_id: string; affinity: number; at: string }>;
   moods: Array<{ agent_id: string; mood: string; intensity: number; updated_at: string }>;
@@ -427,6 +509,8 @@ CREATE TABLE IF NOT EXISTS memories (
   tags TEXT NOT NULL,
   emotion TEXT,
   metadata TEXT NOT NULL,
+  invalid_at TEXT,
+  superseded_by TEXT,
   PRIMARY KEY (agent_id, id)
 ) STRICT;
 CREATE TABLE IF NOT EXISTS conversations (
@@ -437,6 +521,15 @@ CREATE TABLE IF NOT EXISTS conversations (
   at TEXT,
   PRIMARY KEY (agent_id, seq)
 ) STRICT;
+CREATE TABLE IF NOT EXISTS proactive_messages (
+  id TEXT NOT NULL PRIMARY KEY,
+  agent_id TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  trigger TEXT NOT NULL,
+  read_at TEXT
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_proactive_messages_agent ON proactive_messages(agent_id, created_at);
 CREATE TABLE IF NOT EXISTS relationships (
   agent_id TEXT NOT NULL,
   target_id TEXT NOT NULL,
@@ -534,6 +627,8 @@ export class RealmStateStore {
   private readonly conversations = new Map<string, RealmConversationTurnV1[]>();
   private lastTick?: RealmTickState;
   private storyGenerationValue = 0;
+  /** Engine diagnostic records refused by the memory-stream boundary. */
+  private withheldDiagnostics = 0;
 
   constructor(dataDir: string, config?: RealmConfig) {
     this.dataDir = dataDir;
@@ -542,6 +637,7 @@ export class RealmStateStore {
     this.config = config ?? this.loadConfig();
     this.db = new DatabaseSync(join(dataDir, "realm.sqlite"));
     this.db.exec(SCHEMA_SQL);
+    this.migrateMemoryLifecycleColumns();
     // Relationship history is queried by time window; keep it indexed so
     // long-running realms stay fast as the log grows (pruning is governance).
     this.db.exec(
@@ -549,6 +645,22 @@ export class RealmStateStore {
     );
     this.migrateLegacyJson();
     this.loadState();
+  }
+
+  /**
+   * `CREATE TABLE IF NOT EXISTS` never adds columns to an existing store, so
+   * older realm databases pick up the invalidation columns here (idempotent).
+   */
+  private migrateMemoryLifecycleColumns(): void {
+    const columns = new Set(
+      (this.db.prepare("PRAGMA table_info(memories)").all() as unknown as Array<{ name: string }>)
+        .map((column) => column.name),
+    );
+    for (const column of ["invalid_at", "superseded_by"]) {
+      if (!columns.has(column)) {
+        this.db.exec(`ALTER TABLE memories ADD COLUMN ${column} TEXT`);
+      }
+    }
   }
 
   dataDirectory(): string {
@@ -970,8 +1082,11 @@ export class RealmStateStore {
         displayName: agent.displayName,
         memories: records.length,
         conversationTurns: (this.conversations.get(agent.agentId) ?? []).length,
+        proactiveMessages: this.proactiveCount(agent.agentId),
+        unreadProactive: this.unreadProactiveMessages(agent.agentId).length,
         ...(oldest !== undefined ? { oldestMemoryAt: oldest } : {}),
         staleMemories: records.filter((record) => record.lastAccessedAt < staleBefore).length,
+        invalidatedMemories: records.filter((record) => record.invalidAt !== undefined).length,
       };
     });
     const relationships = this.config.agents.reduce(
@@ -992,11 +1107,15 @@ export class RealmStateStore {
       totals: {
         memories: agents.reduce((total, agent) => total + agent.memories, 0),
         conversationTurns: agents.reduce((total, agent) => total + agent.conversationTurns, 0),
+        proactiveMessages: agents.reduce((total, agent) => total + agent.proactiveMessages, 0),
+        unreadProactive: agents.reduce((total, agent) => total + agent.unreadProactive, 0),
         relationships,
         relationshipHistoryRows,
         moods,
         affectStates,
         staleMemories: agents.reduce((total, agent) => total + agent.staleMemories, 0),
+        invalidatedMemories: agents.reduce((total, agent) => total + agent.invalidatedMemories, 0),
+        withheldDiagnostics: this.withheldDiagnostics,
       },
       dbBytes: statSync(join(this.dataDir, "realm.sqlite")).size,
     };
@@ -1092,6 +1211,110 @@ export class RealmStateStore {
     return turns.length;
   }
 
+  /**
+   * Record one self-initiated message. It stays unread until the participant
+   * answers, which is what the backoff guard measures.
+   */
+  appendProactiveMessage(
+    agentId: string,
+    message: { content: string; createdAt: string; trigger: string },
+  ): ProactiveMessageV1 {
+    this.agent(agentId);
+    if (message.content.trim().length === 0) {
+      throw new RealmStateError("proactive message content must not be empty");
+    }
+    const record: ProactiveMessageV1 = {
+      // The agent id keeps ids unique across agents ticking in the same millisecond.
+      id: `proactive_${Date.parse(message.createdAt)}_${agentId}_${this.proactiveCount(agentId) + 1}`,
+      agentId,
+      content: message.content,
+      createdAt: message.createdAt,
+      trigger: message.trigger,
+    };
+    this.inTransaction(() => {
+      this.db
+        .prepare(
+          "INSERT INTO proactive_messages (id, agent_id, content, created_at, trigger, read_at) VALUES (?, ?, ?, ?, ?, NULL)",
+        )
+        .run(record.id, record.agentId, record.content, record.createdAt, record.trigger);
+    });
+    return record;
+  }
+
+  /** Most recent self-initiated messages, oldest first. */
+  proactiveMessages(agentId: string, limit = 20): readonly ProactiveMessageV1[] {
+    this.agent(agentId);
+    const rows = this.db
+      .prepare(
+        "SELECT id, agent_id, content, created_at, trigger, read_at FROM proactive_messages WHERE agent_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
+      )
+      .all(agentId, limit) as unknown as ProactiveMessageRow[];
+    return rows.map(proactiveRowToRecord).reverse();
+  }
+
+  /** Self-initiated messages the participant has not answered yet, oldest first. */
+  unreadProactiveMessages(agentId: string): readonly ProactiveMessageV1[] {
+    this.agent(agentId);
+    const rows = this.db
+      .prepare(
+        "SELECT id, agent_id, content, created_at, trigger, read_at FROM proactive_messages WHERE agent_id = ? AND read_at IS NULL ORDER BY created_at, id",
+      )
+      .all(agentId) as unknown as ProactiveMessageRow[];
+    return rows.map(proactiveRowToRecord);
+  }
+
+  /** Mark every unread self-initiated message as answered; returns how many changed. */
+  markProactiveRead(agentId: string, at: string): number {
+    this.agent(agentId);
+    let changed = 0;
+    this.inTransaction(() => {
+      const result = this.db
+        .prepare("UPDATE proactive_messages SET read_at = ? WHERE agent_id = ? AND read_at IS NULL")
+        .run(at, agentId);
+      changed = Number(result.changes ?? 0);
+    });
+    return changed;
+  }
+
+  private proactiveCount(agentId: string): number {
+    return (
+      this.db
+        .prepare("SELECT COUNT(*) AS n FROM proactive_messages WHERE agent_id = ?")
+        .get(agentId) as { n: number }
+    ).n;
+  }
+
+  /** How many engine diagnostic records the boundary has kept out of the stream. */
+  withheldDiagnosticCount(): number {
+    return this.withheldDiagnostics;
+  }
+
+  /**
+   * Retire memories instead of deleting them: the rows stay as provenance,
+   * while retrieval and every character-facing projection skip them.
+   */
+  invalidateMemories(agentId: string, memoryIds: readonly string[], at: string): number {
+    if (memoryIds.length === 0) {
+      return 0;
+    }
+    const store = this.memoryStore(agentId);
+    const changed = store.invalidate(agentId, memoryIds, at);
+    if (changed === 0) {
+      return 0;
+    }
+    const targets = new Set(memoryIds);
+    const rows = store.list(agentId).filter((record) => targets.has(record.id));
+    this.inTransaction(() => {
+      const statement = this.db.prepare(
+        "UPDATE memories SET invalid_at = ?, superseded_by = ? WHERE agent_id = ? AND id = ?",
+      );
+      for (const record of rows) {
+        statement.run(record.invalidAt ?? at, record.supersededBy ?? null, agentId, record.id);
+      }
+    });
+    return changed;
+  }
+
   /** Apply proposed memory writes (ids generated by the store) and persist. */
   applyMemoryWrites(
     agentId: string,
@@ -1100,8 +1323,13 @@ export class RealmStateStore {
     if (writes.length === 0) {
       return [];
     }
+    const accepted = writes.filter((write) => !isEngineDiagnosticRecord(write));
+    this.withheldDiagnostics += writes.length - accepted.length;
+    if (accepted.length === 0) {
+      return [];
+    }
     const store = this.memoryStore(agentId);
-    const records = writes.map((write) => store.remember(agentId, write));
+    const records = accepted.map((write) => store.remember(agentId, write));
     this.inTransaction(() => {
       this.upsertMemories(records);
     });
@@ -1118,6 +1346,12 @@ export class RealmStateStore {
     const added: MemoryRecord<RealmMemoryMetadataV1>[] = [];
     for (const record of records) {
       if (known.has(record.id)) {
+        continue;
+      }
+      // Deterministic templates stay diagnostics: they would otherwise fill the
+      // stream with repeated text that the character cannot even recall.
+      if (isEngineDiagnosticRecord(record)) {
+        this.withheldDiagnostics += 1;
         continue;
       }
       added.push(
@@ -1182,7 +1416,7 @@ export class RealmStateStore {
   private loadState(): void {
     const memoryRows = this.db
       .prepare(
-        "SELECT agent_id, id, kind, content, created_at, last_accessed_at, importance, source_ids, related_memory_ids, visibility, tags, emotion, metadata FROM memories ORDER BY agent_id, created_at, id",
+        "SELECT agent_id, id, kind, content, created_at, last_accessed_at, importance, source_ids, related_memory_ids, visibility, tags, emotion, metadata, invalid_at, superseded_by FROM memories ORDER BY agent_id, created_at, id",
       )
       .all() as unknown as MemoryRow[];
     const conversationRows = this.db
@@ -1269,12 +1503,15 @@ export class RealmStateStore {
     return {
       memories: this.db
         .prepare(
-          "SELECT agent_id, id, kind, content, created_at, last_accessed_at, importance, source_ids, related_memory_ids, visibility, tags, emotion, metadata FROM memories ORDER BY agent_id, created_at, id",
+          "SELECT agent_id, id, kind, content, created_at, last_accessed_at, importance, source_ids, related_memory_ids, visibility, tags, emotion, metadata, invalid_at, superseded_by FROM memories ORDER BY agent_id, created_at, id",
         )
         .all() as unknown as MemoryRow[],
       conversations: this.db
         .prepare("SELECT agent_id, seq, role, content, at FROM conversations ORDER BY agent_id, seq")
         .all() as unknown as ConversationRow[],
+      proactiveMessages: this.db
+        .prepare("SELECT id, agent_id, content, created_at, trigger, read_at FROM proactive_messages ORDER BY created_at, id")
+        .all() as unknown as ProactiveMessageRow[],
       relationships: this.db
         .prepare("SELECT agent_id, target_id, affinity, updated_at FROM relationships ORDER BY agent_id, target_id")
         .all() as unknown as Array<{ agent_id: string; target_id: string; affinity: number; updated_at: string }>,
@@ -1298,6 +1535,7 @@ export class RealmStateStore {
     for (const table of [
       "memories",
       "conversations",
+      "proactive_messages",
       "relationships",
       "relationship_history",
       "moods",
@@ -1311,6 +1549,20 @@ export class RealmStateStore {
       snapshot.memories.map((row) => this.memoryRowToRecord(row)),
     );
     this.upsertTurnsByRows(snapshot.conversations);
+
+    const proactiveStatement = this.db.prepare(
+      "INSERT INTO proactive_messages (id, agent_id, content, created_at, trigger, read_at) VALUES (?, ?, ?, ?, ?, ?)",
+    );
+    for (const row of snapshot.proactiveMessages) {
+      proactiveStatement.run(
+        row.id,
+        row.agent_id,
+        row.content,
+        row.created_at,
+        row.trigger,
+        row.read_at,
+      );
+    }
 
     const relationshipStatement = this.db.prepare(
       "INSERT INTO relationships (agent_id, target_id, affinity, updated_at) VALUES (?, ?, ?, ?)",
@@ -1394,6 +1646,8 @@ export class RealmStateStore {
       ...(row.emotion !== null
         ? { emotion: this.parseJson<EmotionSignature>(row.emotion, `memories.${row.id}.emotion`) }
         : {}),
+      ...(row.invalid_at !== null ? { invalidAt: row.invalid_at } : {}),
+      ...(row.superseded_by !== null ? { supersededBy: row.superseded_by } : {}),
       metadata: this.parseJson<RealmMemoryMetadataV1>(row.metadata, `memories.${row.id}.metadata`),
     };
   }
@@ -1506,8 +1760,8 @@ export class RealmStateStore {
       return;
     }
     const statement = this.db.prepare(
-      `INSERT INTO memories (agent_id, id, kind, content, created_at, last_accessed_at, importance, source_ids, related_memory_ids, visibility, tags, emotion, metadata)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO memories (agent_id, id, kind, content, created_at, last_accessed_at, importance, source_ids, related_memory_ids, visibility, tags, emotion, metadata, invalid_at, superseded_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(agent_id, id) DO UPDATE SET
          kind = excluded.kind,
          content = excluded.content,
@@ -1519,7 +1773,9 @@ export class RealmStateStore {
          visibility = excluded.visibility,
          tags = excluded.tags,
          emotion = excluded.emotion,
-         metadata = excluded.metadata`,
+         metadata = excluded.metadata,
+         invalid_at = excluded.invalid_at,
+         superseded_by = excluded.superseded_by`,
     );
     for (const record of records) {
       statement.run(
@@ -1536,6 +1792,8 @@ export class RealmStateStore {
         JSON.stringify(record.tags),
         record.emotion !== undefined ? JSON.stringify(record.emotion) : null,
         JSON.stringify(record.metadata),
+        record.invalidAt ?? null,
+        record.supersededBy ?? null,
       );
     }
   }
@@ -1900,6 +2158,7 @@ function validateAgent(input: unknown, index: number): RealmPersonaConfig {
   const persona = validatePersona(record.persona, index);
   const routines = Array.isArray(record.routines) ? record.routines : [];
   const plotScript = validatePlotScript(record.plotScript, index);
+  const proactive = validateProactiveConfig(record.proactive, index);
   return {
     agentId: record.agentId as string,
     personaId: record.personaId as string,
@@ -1932,7 +2191,38 @@ function validateAgent(input: unknown, index: number): RealmPersonaConfig {
       };
     }),
     ...(plotScript !== undefined ? { plotScript } : {}),
+    ...(proactive !== undefined ? { proactive } : {}),
   };
+}
+
+function proactiveRowToRecord(row: ProactiveMessageRow): ProactiveMessageV1 {
+  return {
+    id: row.id,
+    agentId: row.agent_id,
+    content: row.content,
+    createdAt: row.created_at,
+    trigger: row.trigger,
+    ...(row.read_at !== null ? { readAt: row.read_at } : {}),
+  };
+}
+
+function validateProactiveConfig(input: unknown, index: number): RealmProactiveConfig | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new RealmStateError(`realm config: agents[${index}].proactive must be an object`);
+  }
+  const record = input as Record<string, unknown>;
+  if (typeof record.enabled !== "boolean") {
+    throw new RealmStateError(`realm config: agents[${index}].proactive.enabled must be a boolean`);
+  }
+  if (typeof record.tier !== "string" || !isProactiveTier(record.tier)) {
+    throw new RealmStateError(
+      `realm config: agents[${index}].proactive.tier must be one of: ${PROACTIVE_TIERS.join(", ")}`,
+    );
+  }
+  return { enabled: record.enabled, tier: record.tier };
 }
 
 function validatePlotScript(
