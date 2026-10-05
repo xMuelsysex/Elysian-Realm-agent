@@ -39,6 +39,8 @@
     "host": "node dist/host/main.js",
     "import:lore": "node scripts/import-bh3-dialog.mjs",
     "verify:e2e": "npm run build && bash scripts/run-e2e.sh",
+    "bench": "npm run build && node scripts/bench.mjs && node scripts/bench-memory.mjs",
+    "bench:locomo": "npm run build && node scripts/bench-locomo.mjs",
     "verify": "npm test && npm run verify:e2e"
   },
   "engines": {

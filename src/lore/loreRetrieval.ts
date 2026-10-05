@@ -1,4 +1,5 @@
-import { tokenizeText } from "../text/tokenize.js";
+import { buildCorpusStats, scoreBm25 } from "../text/bm25.js";
+import { tokenizeFrequencies } from "../text/tokenize.js";
 import {
   DEFAULT_LORE_RETRIEVAL_TOP_K,
   validateLoreRetrievalQuery,
@@ -14,13 +15,13 @@ interface ScoredLoreEntry {
   score: number;
 }
 
-/** Deterministic keyword retrieval for curated canon; zero-score entries stay out. */
+/** Deterministic BM25 retrieval for curated canon; zero-score entries stay out. */
 export function retrieveLoreEntries(
   entries: readonly LoreEntryV1[],
   query: LoreRetrievalQueryV1,
 ): LoreRetrievalResultV1 {
   const normalizedQuery = validateLoreRetrievalQuery(query);
-  const queryTokens = tokenizeText(normalizedQuery.text);
+  const queryFrequencies = tokenizeFrequencies(normalizedQuery.text);
   const excluded: Array<{ loreId: string; reason: string }> = [];
   const visible: LoreEntryV1[] = [];
 
@@ -32,7 +33,12 @@ export function retrieveLoreEntries(
     visible.push(entry);
   }
 
-  const scored = visible.map((entry) => ({ entry, score: scoreLoreEntry(entry, queryTokens) }));
+  const documents = visible.map((entry) => tokenizeFrequencies(loreSearchableText(entry)));
+  const corpusStats = buildCorpusStats(documents);
+  const scored = visible.map((entry, index) => ({
+    entry,
+    score: scoreBm25(queryFrequencies, documents[index]!, corpusStats),
+  }));
   const selected = scored
     .filter((entry) => entry.score > 0)
     .sort(compareScoredEntries)
@@ -50,9 +56,8 @@ export function retrieveLoreEntries(
   };
 }
 
-function scoreLoreEntry(entry: LoreEntryV1, queryTokens: ReadonlySet<string>): number {
-  if (queryTokens.size === 0) return 0;
-  const searchableText = [
+function loreSearchableText(entry: LoreEntryV1): string {
+  return [
     entry.title,
     entry.summary,
     entry.cause,
@@ -62,12 +67,6 @@ function scoreLoreEntry(entry: LoreEntryV1, queryTokens: ReadonlySet<string>): n
   ]
     .filter((value): value is string => value !== undefined)
     .join(" ");
-  const recordTokens = tokenizeText(searchableText);
-  let matches = 0;
-  for (const token of queryTokens) {
-    if (recordTokens.has(token)) matches += 1;
-  }
-  return matches / queryTokens.size;
 }
 
 function compareScoredEntries(left: ScoredLoreEntry, right: ScoredLoreEntry): number {
