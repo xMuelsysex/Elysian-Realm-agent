@@ -39,8 +39,20 @@
 
 ## 验证记录
 
-（待填）
+补记于 2026-10-06（本次收尾验收在 HEAD `55465c4` 上重跑；工作区含并发任务 `2026-09-18-memory-bm25-stemming` 的加法）。
+
+```bash
+npm run typecheck   # tsc -p tsconfig.json --noEmit → 退出码 0（无输出）
+npm test            # build + 测试编译 + node --test → ℹ tests 305 / ℹ pass 305 / ℹ fail 0
+npm run bench       # bench.mjs + bench-memory.mjs → 排序不变量 6/6 PASS
+npm run bench:locomo  # 10 对话 / 5,882 轮 / 1,982 问题 / 2,815 证据轮，0 次 LLM 调用
+```
+
+- LoCoMo 证据召回（当前代码实测；default / lexical-only 权重）：@1 17.9% / 24.9%、@5 29.5% / 40.9%、@10 34.6% / 47.5%、@20 41.8% / 56.0%；p50 6.3 ms / 6.7 ms。
+- 合成语料（bench-memory，1,000 条记忆 / 200 查询）：easy recall@1 100%、hard recall@1 100%、MRR 1.000、排序不变量 6/6 PASS。
+- 计划列出的四条契约断言仍成立（`tests/lore.test.ts` 无匹配零分、code-unit tie-break；`tests/simulationAgentMemory.test.ts` relevance 精确 1、determinism），随 305 全量测试通过。
 
 ## 结论
 
-（待填）
+- 已落地：`src/text/tokenize.ts` 的 `tokenizeFrequencies`、`src/text/bm25.ts`（`buildCorpusStats` / `scoreBm25`，k1=1.2、b=0.75）、`src/lore/loreRetrieval.ts`（BM25 替换覆盖打分，零分过滤保留）、`src/memory/retrieval.ts`（文本通道接入共享 BM25；长度归一化实测关闭 b=0，该选项由并发任务 `2026-09-18-memory-bm25-stemming` 追加）。
+- 遗留（计划中未实现）：`src/lore/loreDialogueRetrieval.ts` 的 `scoreScene` 未接入 BM25，仍是朴素覆盖率打分 `matched / queryTokens.size`——「三处检索接入」只完成两处。

@@ -6,7 +6,7 @@ Independent home for the Elysian Realm simulation-agent cognitive core and its s
 
 The package now serves two cooperating tracks:
 
-- **Tick track** — the deterministic cognitive loop (perceive, retrieve, plan, act, remember, reflect) resolved in batches via `realm-agent-step.v1`. Plans come from deterministic routines; no LLM is involved.
+- **Tick track** — the deterministic cognitive loop (perceive, retrieve, plan, act, remember, reflect) resolved in batches via `realm-agent-step.v1`. The service-side step executor is fully deterministic — plans come from deterministic routines, no LLM is involved — while the host tick's life narratives and nightly reflection call the LLM when one is configured.
 - **Conversation track** — stateless single-turn conversations via `realm-conversation.v1`, driven by `@earendil-works/pi-agent-core` for reply generation and an `LlmPort` for post-conversation affect analysis.
 
 Both tracks meet in host-owned shared state: the memory stream and the affect snapshots (relationship affinity, agent mood). Conversation replies see tick-era memories and current affinity; later ticks retrieve conversation memories. The service only ever returns proposals (actions, memory writes, affect deltas); the host stays authoritative and applies them.

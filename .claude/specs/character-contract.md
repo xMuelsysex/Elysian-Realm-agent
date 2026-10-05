@@ -38,7 +38,7 @@
 ## 不变量
 
 - 保持旧字符串兼容：字符串 persona 渲染结果与升级前逐字节一致（`Persona:\n` 单节），旧 realm.json 无需迁移。
-- persona 是静态配置（realm.json 权威），不写入记忆流（P5「自我认知记忆」延后，YAGNI）。
+- persona 是静态配置（realm.json 权威），不写入记忆流；self-concept 已是独立子系统（`src/selfConcept/` + `src/host/realmState.ts`：夜间反思产出 proposal → 证据校验 → revision CAS 快照），快照只注入 prompt，仍不进 persona 字段。
 - 不引入 OCEAN/EPA 兼容层、行为树、GOAP 引擎；六维数值由统一规则映射到 prompt、routine 和 Host 事件响应，LLM 只负责文本表现。
 
 ## 已知坑

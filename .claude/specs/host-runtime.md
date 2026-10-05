@@ -78,4 +78,4 @@
 - `npm run verify`：npm test + verify:e2e 聚合全量验证（单元 + 帧级 E2E）；`ELYSIAN_CREDENTIALS_PATH=<real> bash scripts/run-e2e.sh` 切真实中转。
 - 浏览器验证（Playwright）：进程需跨工具调用存活——`setsid nohup ... & disown`；清理用 `fuser -k PORT`；`pkill -f` 模式会匹配自身 shell 命令行（自杀），用 `[.]` 或 fuser。
 
-- **记忆治理**：设计提案见 `.claude/specs/memory-governance.md`（未执行，删除类操作需主人确认）。
+- **记忆治理**：方案 A（记忆失效，不删除）已实现——`POST /v1/host/govern`，默认 `dryRun=true`（显式传 `false` 才真改）；方案 B（对话 500 turns 裁剪）与失效记录的物理清理仍未执行，属删除类操作，需主人确认；规则见 `.claude/specs/memory-governance.md`。
