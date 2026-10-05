@@ -1,5 +1,14 @@
 # Elysian Realm Agent — 项目记忆（倒序）
 
+## 2026-10-05 收尾战：累积提交 + 真治理 + O(n²) 修复
+
+- 累积工作按主题落为 5 个提交：`551d8c6` 记忆检索、`3e92268` 主动联系与失效治理、`764beaf` OOC 防线、`6346890` 架构图与任务留痕、`55465c4` 仓库卫生；随后 `e222b24` 修复 O(n²)、`4ff7144` 修正文档漂移。本次补 README 漏网版本号 `0.82.1`→`0.84.1`；不包含 `realm-data/`、未 push。详细事实见 `.claude/tasks/2026-10-05-worktree-consolidation/task.md`。
+- 真治理已执行一次：46 条中 20 条引擎模板失效（elysia 12 + mobius 8），行数与 id 集合不变、`id|content` 哈希一致；20/20 失效记录检索排除、0 泄漏，26/26 未失效记录可召回，二次 dry-run 候选归零。对话 500 turns 裁剪与失效记录物理清理仍待主人确认。
+- 性能探针（i7-13700H / Node v24.14.1，warmup 2 + 7 次取 p50）：n=8000 构造 1472.1→6.8 ms、插入 1450.5→4.8 ms，真实 per-turn 1514.2→67.4 ms；完整返回结果 deepEqual。
+- 提交前后 typecheck 无错，单测均 305 pass / fail 0；独立 worktree 本地 stub 帧级 e2e：`METRIC sse_first_delta_ms=15` / `sse_total_ms=637` / `sse_frames=4`，SSE 终态、持久化、情感、夜间记忆与 withheld、proactive、govern、反思证据、json 回退及梅比乌斯链路通过。
+- 独立对抗验证发现真反例：带副作用 getter 让 `record.id` 多次读取导致 `knownIds` 错位（`COUNTEREXAMPLE_CONFIRMED`，退出码 1）；未证明可经 HTTP/JSON/SQLite 输入触发。修复方向为 id 单次快照；修复提交与复审结果待补。
+- 本条由收尾 agent 按简报汇总，不冒充本次文档整理重新实测；归档日期为 2026-10-05，逐项测量日期与非性能验证的机器信息待补。`scoreScene` 未接入 BM25 的遗留保持不变。
+
 ## 2026-09-19 简历项目经历（repo2resume）
 
 - 需求：把本项目写成简历项目经历。按 `repo2resume` skill 执行：四路并行只读深扫（架构与设计 / 工程实践 / 性能与优化 / 业务与难点）→ 汇总事实与候选亮点 → 产出文本。

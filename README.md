@@ -30,7 +30,7 @@ Host applications continue to own authoritative world state, action application,
 ## Dependencies
 
 - Node `>=22.19.0`.
-- `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core`, pinned exactly to `0.82.1` (`save-exact` is enforced via `.npmrc`). Upgrade deliberately against the upstream changelog's Breaking Changes sections.
+- `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core`, pinned exactly to `0.84.1` (`save-exact` is enforced via `.npmrc`). Upgrade deliberately against the upstream changelog's Breaking Changes sections.
 - `hono` + `@hono/node-server` (HTTP layer, zero transitive deps), `jsonrepair` (tolerant LLM JSON parsing), and the built-in `node:sqlite` (host persistence) back the service and host processes.
 - The package root entrypoint stays free of pi imports; pi code is reachable only through the `./llm/pi-ai` and `./conversation/pi` subpaths, so the core loop remains host-independent and offline-testable.
 
